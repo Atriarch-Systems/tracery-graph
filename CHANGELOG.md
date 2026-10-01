@@ -36,8 +36,7 @@ Core, client, React and hub 0.1.3; visualizer stays 0.3.2.
   only after npm and Docker Hub are both published. `scripts/release-npm.mjs` re-verifies the checksums,
   keeps its "already published with matching integrity" skip (the unchanged visualizer 0.3.2 is skipped
   this way), and now requires the registry to show the attestation for what it publishes; it has tests.
-- The job works with the existing `NPMJS_TOKEN` secret and is ready for npm Trusted Publishing (no token):
-  docs/PUBLISHING.md lists the exact Trusted Publisher settings to enter for each package.
+- The job works with the existing `NPMJS_TOKEN` secret and also supports npm Trusted Publishing (OIDC).
 - `publish:check` also verifies that the hub tarball ships `openapi.json`, does not serve it by default and
   has no `@fastify/swagger` runtime dependency.
 

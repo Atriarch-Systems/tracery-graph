@@ -14,7 +14,7 @@ restricted to `Atriarch-Systems/tracery-graph`:
 
 | Secret | Value to obtain |
 | --- | --- |
-| `NPMJS_TOKEN` | An npmjs.com granular access token with read/write permission to the `@atriarch-systems` scope and **Bypass 2FA** enabled for non-interactive publishing (see "npm authentication" below; it becomes unnecessary once Trusted Publishing is set up). The token's owner must have publication rights to that scope. Use the shortest practical expiration and rotate it. |
+| `NPMJS_TOKEN` | An npmjs.com granular access token with read/write permission to the `@atriarch-systems` scope and **Bypass 2FA** enabled for non-interactive publishing (see "npm authentication" below). The token's owner must have publication rights to that scope. Use the shortest practical expiration and rotate it. |
 | `DOCKERHUB_USERNAME` | The Docker ID of the account that owns the access token and can push to the target repository; this can differ from the organization namespace. |
 | `DOCKERHUB_TOKEN` | That Docker account's access token with read/write access to the target repository. Delete permission is unnecessary. |
 
@@ -66,11 +66,11 @@ attestation for every package it published in that run (a package skipped becaus
 version is already on npm, such as an unchanged visualizer, is not held to this). A version
 that went out without provenance cannot be repaired by retrying; release a new patch version.
 
-## npm authentication: token now, Trusted Publishing later
+## npm authentication
 
-The job works with either, and prefers OIDC when a package has a Trusted Publisher.
+The job authenticates with the token below; it also uses the workflow's OIDC identity when a package is configured for it.
 
-**Today: the `NPMJS_TOKEN` secret.** Used as `NODE_AUTH_TOKEN` in `publish-npm` only, after the
+The `NPMJS_TOKEN` secret is used as `NODE_AUTH_TOKEN` in `publish-npm` only, after the
 artifact checksums and `npm whoami`. Keep its blast radius small:
 
 - Scope it to the `@atriarch-systems` scope only, never "all packages", and narrow it to the
@@ -78,31 +78,6 @@ artifact checksums and `npm whoami`. Keep its blast radius small:
 - It needs **Bypass 2FA** for non-interactive publishing. Set a 30-90 day expiry and rotate it.
 - Store it only as the `Atriarch-Systems` organization Actions secret `NPMJS_TOKEN`, with
   repository access limited to `tracery-graph`.
-
-**Later: Trusted Publishing (no token).** Configure this once per package on npmjs.com, under
-each package's **Settings → Trusted Publisher → GitHub Actions**:
-
-| Field | Value |
-| --- | --- |
-| Organization or user | `Atriarch-Systems` |
-| Repository | `tracery-graph` |
-| Workflow filename | `release.yaml` (the file name only, with the extension, exactly as in `.github/workflows/`) |
-| Environment name | leave empty (the workflow uses no GitHub environment) |
-
-Repeat for all five packages: `@atriarch-systems/tracery-core`, `-visualizer`, `-client`,
-`-react` and `-hub`. Then:
-
-1. Publish one release and confirm `publish-npm` succeeds and each package shows a provenance
-   badge on npmjs.com.
-2. Delete the `NPMJS_TOKEN` Actions secret. The job then prints that it is using OIDC and
-   publishes without any stored credential (`npm whoami` is skipped; OIDC is exercised by
-   the publish itself).
-3. Optionally, in each package's **Settings → Publishing access**, choose *Require two-factor
-   authentication and disallow tokens*, and revoke the old granular token on npmjs.com.
-
-Do not add a GitHub environment to `publish-npm` unless you also enter its name in the
-Trusted Publisher settings; a mismatch is rejected. The job installs a pinned `npm@11.21.0`
-because Trusted Publishing needs npm 11.5.1 or newer and Node 22 bundles an older npm.
 
 Docker Hub and registry tokens are separate: see the secrets table above. Do not put tokens in
 source files, issue comments or chat.
