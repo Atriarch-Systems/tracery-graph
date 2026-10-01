@@ -51,12 +51,16 @@ RUN if [ -f apps/hub/web/package.json ]; then \
 # workspace link); core has no dependencies and only type-imports the
 # visualizer, and apps/hub/web/dist is a prebuilt, self-contained bundle.
 # The runtime copies only the root node_modules, so nothing may be nested in a
-# workspace's own node_modules. Notices are generated from exactly this tree.
+# workspace's own node_modules (an empty directory left behind for dev-only
+# nested packages, e.g. apps/hub's pinned @fastify/swagger, is fine). Notices are
+# generated from exactly this tree.
 RUN rm -rf node_modules packages/*/node_modules apps/*/node_modules apps/hub/web/node_modules \
       clients/*/node_modules examples/*/node_modules \
  && npm ci --omit=dev --ignore-scripts --no-audit --no-fund -w @atriarch-systems/tracery-hub \
  && for dir in packages/*/node_modules apps/*/node_modules apps/hub/web/node_modules; do \
-      if [ -e "$dir" ]; then echo "unexpected nested runtime dependencies: $dir"; exit 1; fi; \
+      if [ -d "$dir" ] && [ -n "$(find "$dir" -mindepth 2 -maxdepth 3 -name package.json -print -quit)" ]; then \
+        echo "unexpected nested runtime dependencies: $dir"; ls -A "$dir"; exit 1; \
+      fi; \
     done \
  && node scripts/runtime-notices.mjs
 
