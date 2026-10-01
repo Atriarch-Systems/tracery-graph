@@ -257,7 +257,7 @@ jobs:
       # Trusted Publishing needs npm 11.5.1 or newer; the npm bundled with Node 22 is older.
       - name: Install a pinned npm that supports provenance and Trusted Publishing
         run: |
-          npm install -g npm@11.21.0
+          npm install -g --ignore-scripts --no-audit --no-fund npm@11.21.0
           npm --version
       - name: Check npm authentication
         env:

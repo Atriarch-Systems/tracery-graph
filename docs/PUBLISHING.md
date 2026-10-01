@@ -102,7 +102,7 @@ source files, issue comments or chat.
 3. Once validation and the account setup above are complete, run the workflow
    again on **main**, select **publish**, and enter the exact prepared version
    without a `v`, for example `0.1.1`.
-4. After validation and credential checks succeed, the workflow creates an
+4. After validation and the Docker credential checks succeed, the workflow creates an
    annotated `v0.1.1` tag at the exact tested commit and a draft GitHub release.
    It publishes the tested npm tarballs (with provenance) and Docker images,
    attaches the evidence, and publishes the GitHub release. An existing tag must already resolve to
@@ -231,7 +231,9 @@ the credentials or connection problem and rerun **only the failed job** from
 the same Actions run (`publish-npm` or `publish`; the jobs after it then run). It reuses the validated
 artifacts. A rerun of `publish-npm` skips packages already on npm with identical bytes. Existing tags, npm
 versions, architecture images and GitHub assets must match; mismatches fail
-rather than overwrite evidence. A draft release stays draft until all assets
+rather than overwrite evidence. npm credentials are proven only in `publish-npm`, which runs after
+the tag and draft release exist: a missing or expired `NPMJS_TOKEN` leaves the tag and a draft, and
+the fix is to correct the credential and rerun `publish-npm`. A draft release stays draft until all assets
 are uploaded and both registries have been published.
 
 If rebuilding changes bytes after any upload, prepare a new patch version.

@@ -13,7 +13,8 @@ Core, client, React and hub 0.1.3; visualizer stays 0.3.2.
   runtime. It is generated at build time from the real route schemas (`npm run openapi`, using
   `@fastify/swagger` as a devDependency), committed as `apps/hub/openapi.json`, and shipped in the
   package and the Docker image. `GET /v1/openapi.json` is served only when `TRACERY_OPENAPI=1`;
-  otherwise it is a 404. Behaviour when enabled is unchanged (same document, no authentication).
+  otherwise it is a 404. When enabled it is served as before (no authentication). The document covers the hub's built-in
+  routes; routes added by a `TRACERY_EXTENSIONS_MODULE` are not in it.
   A test fails if the committed document drifts from the routes. **Upgrade note:** set
   `TRACERY_OPENAPI=1` if you or your tooling fetch `/v1/openapi.json`; the "UI not built" page no longer
   links to it.
