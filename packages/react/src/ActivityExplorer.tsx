@@ -325,7 +325,7 @@ export function ActivityExplorer(props: ActivityExplorerProps) {
     } else {
       setSelectedNodeId(node.id);
     }
-  };
+  }, [activeFlow]);
 
   return (
     <div
