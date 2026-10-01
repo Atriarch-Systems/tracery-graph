@@ -2,8 +2,8 @@ apiVersion: v2
 name: tracery-hub
 description: Tracery Graph Hub -- standalone activity-graph server (SPEC.md §6). Apps push events with a client SDK; the hub stores, sorts, serves and draws.
 type: application
-version: 0.1.2
-appVersion: "0.1.2"
+version: 0.1.3
+appVersion: "0.1.3"
 keywords:
   - tracery
   - activity

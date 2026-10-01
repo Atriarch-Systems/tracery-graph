@@ -270,7 +270,7 @@ Fastify 5 on Node 22. Configuration by environment variables (documented in
 `apps/hub/README.md`), with an in-memory loopback-only local default for the Node process. Containers
 bind all interfaces and require keys or an explicit runtime auth opt-out.
 
-### HTTP API (all under `/v1`, JSON, OpenAPI 3.1 served at `/v1/openapi.json`)
+### HTTP API (all under `/v1`, JSON; OpenAPI 3.1 shipped as `openapi.json` and served at `/v1/openapi.json` only when `TRACERY_OPENAPI=1`)
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
@@ -415,7 +415,7 @@ repo, executed by the integration workstream:
 2. `python -m pytest clients/python` green on 3.11 (3.13 acceptable locally).
 3. `docker build -f apps/hub/Dockerfile .` succeeds; `docker run` with no env
    fails closed; explicit `TRACERY_AUTH=none` on a loopback-published port serves `/healthz`,
-   `/v1/info`, `/v1/openapi.json`, `/ui/`.
+   `/v1/info`, `/ui/` (and `/v1/openapi.json` with `TRACERY_OPENAPI=1`).
 4. A demo script (`scripts/demo.mjs`) drives the TS client to emit a parent flow
    that spawns two child flows (one via the Python client), then asserts through
    the hub API that: the trace has three flows; the child trace ids equal the

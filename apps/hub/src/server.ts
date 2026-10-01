@@ -8,10 +8,11 @@ import Fastify, { type FastifyError, type FastifyInstance, type FastifyRequest }
 import websocketPlugin from '@fastify/websocket';
 import corsPlugin from '@fastify/cors';
 import { allowsBrowserRequest } from './origin.js';
-import swaggerPlugin from '@fastify/swagger';
+import fs from 'node:fs';
+import path from 'node:path';
 import { ACTIVITY_LIMITS } from '@atriarch-systems/tracery-core/contract';
 import { authenticate, localModeAuth, AuthError, type AuthContext } from './auth.js';
-import { hubVersion, type ApiKeyConfig, type Config, type Role } from './config.js';
+import { hubPackageRoot, hubVersion, type ApiKeyConfig, type Config, type Role } from './config.js';
 import { MemoryStore } from './store/memory.js';
 import { SqliteStore } from './store/sqlite.js';
 import { PostgresStore } from './store/postgres.js';
@@ -86,7 +87,27 @@ export function clientErrorCode(error: FastifyError): string {
   }
 }
 
-export async function createServer(config: Config, extensions?: HubExtensions): Promise<CreatedServer> {
+/** Fixed `info` block of the published OpenAPI document (see `scripts/generate-openapi.mjs`). */
+export function openApiInfo(): { readonly title: string; readonly version: string; readonly description: string } {
+  return { title: 'Tracery Graph Hub', version: hubVersion(), description: 'SPEC.md §6 HTTP API.' };
+}
+
+/** Where the pre-generated OpenAPI document ships in the package (`apps/hub/openapi.json`). */
+export function openApiDocumentPath(): string {
+  return path.join(hubPackageRoot(), 'openapi.json');
+}
+
+export interface CreateServerOptions {
+  /**
+   * Runs after CORS and before any route is registered. Build tooling only:
+   * `scripts/generate-openapi.mjs` registers `@fastify/swagger` here (a
+   * devDependency, never loaded by the running hub) so it can observe every
+   * route's schema as it is added.
+   */
+  readonly beforeRoutes?: (app: FastifyInstance) => void | Promise<void>;
+}
+
+export async function createServer(config: Config, extensions?: HubExtensions, options: CreateServerOptions = {}): Promise<CreatedServer> {
   const store = await openStore(config);
   const metrics = new MetricsRegistry();
 
@@ -175,12 +196,7 @@ export async function createServer(config: Config, extensions?: HubExtensions): 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['content-type', 'authorization', 'x-api-key'],
   });
-  await app.register(swaggerPlugin, {
-    openapi: {
-      openapi: '3.1.0',
-      info: { title: 'Tracery Graph Hub', version: hubVersion(), description: 'SPEC.md §6 HTTP API.' },
-    },
-  });
+  await options.beforeRoutes?.(app);
 
   // Task ("local mode"): `authMode === 'none'` bypasses key lookup entirely --
   // every request is a full-access principal on workspace "default" (see
@@ -215,7 +231,16 @@ export async function createServer(config: Config, extensions?: HubExtensions): 
   registerExportRoutes(app, ctx);
   registerLive(app, { store, keys, metrics, extensions, authMode: config.authMode });
 
-  app.get('/v1/openapi.json', { schema: { hide: true } }, async () => app.swagger());
+  // The document is generated at build time from these same route schemas and
+  // shipped as a file; nothing here builds it at runtime. Off unless asked for.
+  if (config.openapi) {
+    const documentPath = openApiDocumentPath();
+    if (!fs.existsSync(documentPath)) {
+      throw new Error('TRACERY_OPENAPI=1 but the pre-generated OpenAPI document is missing at ' + documentPath);
+    }
+    const document = fs.readFileSync(documentPath, 'utf8');
+    app.get('/v1/openapi.json', async (_request, reply) => reply.type('application/json; charset=utf-8').send(document));
+  }
 
   // Registered last so an extensions module's routes (e.g. Tracery Cloud's
   // /v1/license) and the UI's SPA catch-all 404 handler see every built-in

@@ -296,6 +296,22 @@ A from-scratch verification pass was run after all fixes and roadmap extensions 
 
 ---
 
+## Supply chain (v0.1.3)
+
+socket.dev scores the published packages around 77 and flags three HIGH alerts on `tracery-hub`.
+
+| Alert | Finding | Action |
+|---|---|---|
+| Unstable ownership: `@fastify/swagger@9.9.1` (new publisher) | It was a runtime dependency only to serve `/v1/openapi.json`. | The document is generated at build time and shipped as `apps/hub/openapi.json`; `@fastify/swagger` is now a devDependency pinned to 9.8.1 and never installed by consumers or in the image. Serving the file is opt-in (`TRACERY_OPENAPI=1`). The hub's production tree went from 104 to 98 third-party packages. |
+| Unstable ownership (second alert) | The Fastify ecosystem rotates publishers often. The most recent publisher change in the remaining tree is `content-disposition@3.0.0` (published by GitHub Actions after four human publishers, via `@fastify/static`), which is most likely the second alert; the socket.dev alert page names the package. It is a trusted-publishing migration, not an account change. | None needed. Dropping `@fastify/static` would mean serving the hosted UI by hand, for no real gain. |
+| Optimized override available: `safe-buffer@5.2.1` | Not from `@fastify/static` (`content-disposition@3` has no dependencies). The only path is `@fastify/websocket@11` > `duplexify@4.1.3` > `readable-stream@3.6.2` > `string_decoder@1.3.0` > `safe-buffer`. The newest `@fastify/websocket` (11.3.1), `duplexify` (4.1.3) and `readable-stream@3` (3.6.2, the end of that line) all still depend on it, and `@fastify/websocket` has no newer major. | No upstream release drops it, so it stays. An npm `overrides` entry would only change this repository's lockfile: npm ignores `overrides` in a dependency's `package.json`, so consumers installing `@atriarch-systems/tracery-hub` still get `safe-buffer@5.2.1`. A consumer who wants a different package can add their own `overrides` (for example socket.dev's `@socketregistry/safe-buffer`) in their root `package.json`. The package is a small, long-stable shim that only chooses between `buffer` and a polyfill on old Node versions. The real fix is to stop using `@fastify/websocket` (the hub only needs `ws`, which has no dependencies), which also drops about ten packages (the whole `duplexify` chain); it changes how routes opt in to WebSockets, which Tracery Cloud's extensions module may rely on, so it is not part of this patch. |
+
+Other avoidable weight in the runtime tree, not changed here: `@fastify/static` pulls in `glob@13` and six
+packages behind it (`minimatch`, `brace-expansion`, `balanced-match`, `minipass`, `path-scurry`,
+`lru-cache`), a candidate for a later pass.
+
+npm packages are now published with provenance (docs/PUBLISHING.md).
+
 ## Container image (2026-09-26)
 
 A later, separate pass on `apps/hub/Dockerfile`, measured against the published

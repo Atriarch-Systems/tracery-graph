@@ -205,6 +205,7 @@ async function main() {
           if (pkgDir === 'apps/hub' && (!files.includes('web/dist/THIRD-PARTY-NOTICES.txt') || !files.includes('web/dist/index.html'))) {
             throw new Error('Hub tarball is missing the hosted UI or third-party notices');
           }
+          if (pkgDir === 'apps/hub' && !files.includes('openapi.json')) throw new Error('Hub tarball is missing the pre-generated openapi.json');
           releasePackages.push({ name: pack.name, version: pack.version, filename, integrity: pack.integrity, files });
         }
       } catch (err) {
@@ -326,6 +327,16 @@ async function main() {
     infoBody = { error: err.message };
   }
   check('npx tracery-hub starts; GET /v1/info reports auth: "none"', infoOk, JSON.stringify(infoBody));
+
+  // The OpenAPI document ships pre-generated and is opt-in (TRACERY_OPENAPI=1);
+  // @fastify/swagger is a build-time devDependency and must not be a runtime dependency.
+  let openApiOff = false;
+  try {
+    openApiOff = (await fetch(`${hubUrl}/v1/openapi.json`)).status === 404;
+  } catch { /* leave false */ }
+  check('GET /v1/openapi.json is not served by default', openApiOff);
+  const installedHub = JSON.parse(readFileSync(path.join(tempProjectDir, 'node_modules', '@atriarch-systems', 'tracery-hub', 'package.json'), 'utf8'));
+  check('installed hub has no @fastify/swagger runtime dependency', installedHub.dependencies?.['@fastify/swagger'] === undefined);
 
   let uiOk = false;
   let uiDetail = '';

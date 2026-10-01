@@ -540,34 +540,6 @@ test('metrics: a token of a different length than the configured one is rejected
   }
 });
 
-test('openapi: /v1/openapi.json documents every route (no auth required)', async () => {
-  const created = await createTestServer({ apiKeys: KEYS });
-  try {
-    const res = await created.app.inject({ method: 'GET', url: '/v1/openapi.json' });
-    assert.equal(res.statusCode, 200);
-    const doc = JSON.parse(res.body);
-    assert.equal(doc.openapi, '3.1.0');
-    const paths = Object.keys(doc.paths);
-    for (const expected of [
-      '/v1/info',
-      '/v1/events',
-      '/v1/flows',
-      '/v1/flows/{id}',
-      '/v1/flows/{id}/events',
-      '/v1/traces/{id}',
-      '/v1/traces/{id}/events',
-      '/v1/workspaces',
-      '/healthz',
-      '/readyz',
-      '/metrics',
-    ]) {
-      assert.ok(paths.includes(expected), `openapi document missing path ${expected}; had ${paths.join(', ')}`);
-    }
-  } finally {
-    await created.close();
-  }
-});
-
 test('ui: without a build, /ui serves a plain placeholder page; with one, it serves the SPA and falls back to index.html for deep links', async () => {
   const notBuilt = await createTestServer({ apiKeys: KEYS });
   try {

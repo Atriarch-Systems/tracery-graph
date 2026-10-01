@@ -68,6 +68,8 @@ export interface Config {
    * (e.g. behind a CDN or a path-rewriting gateway).
    */
   readonly publicUrl: string | undefined;
+  /** Serve the pre-generated OpenAPI document at `GET /v1/openapi.json` (`TRACERY_OPENAPI=1`). Off by default. */
+  readonly openapi?: boolean;
   /** Exact browser origins allowed in addition to the hub's own origin. */
   readonly allowedOrigins?: readonly string[];
   /**
@@ -106,6 +108,14 @@ function parseNumber(raw: string | undefined, fallback: number, name: string, bo
   return value;
 }
 
+/** `TRACERY_OPENAPI`: `1`/`true` exposes the OpenAPI document; unset, empty, `0`/`false` leave it off; anything else is a typo and fails fast. */
+function parseOpenApiFlag(raw: string | undefined): boolean {
+  const value = (raw ?? '').trim().toLowerCase();
+  if (value === '' || value === '0' || value === 'false') return false;
+  if (value === '1' || value === 'true') return true;
+  throw new Error(`TRACERY_OPENAPI must be 1 or 0, got "${raw}"`);
+}
+
 const STORE_KINDS: readonly StoreKind[] = ['memory', 'sqlite', 'postgres'];
 
 /** hub-16: an unrecognised `TRACERY_STORE` (a typo like "sqllite") silently fell back to `memory`, so an operator who configured durable storage got everything wiped on the next restart with no warning anywhere. */
@@ -116,18 +126,18 @@ function parseStoreKind(raw: string | undefined): StoreKind {
 }
 
 /** Package root, i.e. `apps/hub`, resolved from the compiled `dist/config.js`. */
-function packageRoot(): string {
+export function hubPackageRoot(): string {
   return fileURLToPath(new URL('..', import.meta.url));
 }
 
 function defaultUiDir(): string {
-  return path.join(packageRoot(), 'web', 'dist');
+  return path.join(hubPackageRoot(), 'web', 'dist');
 }
 
 /** apps/hub's own `package.json` version -- single source of truth for the OpenAPI doc's `info.version` and `GET /v1/info`'s `version` field. */
 export function hubVersion(): string {
   try {
-    const raw = fs.readFileSync(path.join(packageRoot(), 'package.json'), 'utf8');
+    const raw = fs.readFileSync(path.join(hubPackageRoot(), 'package.json'), 'utf8');
     const pkg = JSON.parse(raw) as { version?: unknown };
     return typeof pkg.version === 'string' && pkg.version.length > 0 ? pkg.version : '0.0.0';
   } catch {
@@ -284,6 +294,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     metricsToken: env.TRACERY_METRICS_TOKEN && env.TRACERY_METRICS_TOKEN.length > 0 ? env.TRACERY_METRICS_TOKEN : undefined,
     logLevel: env.TRACERY_LOG_LEVEL ?? 'info',
     uiDir: env.TRACERY_UI_DIR ?? defaultUiDir(),
+    openapi: parseOpenApiFlag(env.TRACERY_OPENAPI),
     publicUrl: env.TRACERY_PUBLIC_URL && env.TRACERY_PUBLIC_URL.trim().length > 0 ? env.TRACERY_PUBLIC_URL.trim().replace(/\/+$/, '') : undefined,
   };
 }

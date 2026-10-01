@@ -308,6 +308,7 @@ Every variable has a default; `node apps/hub/bin/hub.mjs` with none set works. I
 | `TRACERY_MAX_EVENTS_PER_WORKSPACE` | `500000` | Per-workspace event cap enforced by the sweeper, not at ingest. |
 | `TRACERY_METRICS_TOKEN` | unset | When set, `/metrics` requires it (`?token=`, `x-metrics-token` or `Authorization: Bearer`). |
 | `TRACERY_LOG_LEVEL` | `info` | Pino log level. |
+| `TRACERY_OPENAPI` | unset (off) | `1` serves the pre-generated OpenAPI document at `/v1/openapi.json`, without authentication. Off by default. |
 | `TRACERY_UI_DIR` | `apps/hub/web/dist` | Directory served at `/ui/`. Without an `index.html` there, `/ui/` shows a "not built" page. |
 | `TRACERY_PUBLIC_URL` | unset | Public origin used for share URLs and Open Graph tags; trailing slashes are removed. Unset means the request's own origin. |
 | `TRACERY_ALLOWED_ORIGINS` | unset | Comma-separated exact `http(s)` origins, no paths or wildcards, that browsers may call the hub from. |
@@ -328,7 +329,7 @@ In keys mode a key has roles from `ingest`, `read` and `admin`, and is bound to 
 
 ### HTTP API
 
-JSON everywhere; errors are `{ "error": { "code", "message" } }`; every response carries `x-request-id`. The OpenAPI 3.1 document is at `GET /v1/openapi.json`.
+JSON everywhere; errors are `{ "error": { "code", "message" } }`; every response carries `x-request-id`. The OpenAPI 3.1 document ships in the hub package as `openapi.json` (generated at build time) and is served at `GET /v1/openapi.json` only when `TRACERY_OPENAPI=1`.
 
 | Method | Path | Role | Purpose |
 |---|---|---|---|
@@ -336,7 +337,7 @@ JSON everywhere; errors are `{ "error": { "code", "message" } }`; every response
 | GET | `/healthz` | none | Liveness: `{"status":"ok"}`. |
 | GET | `/readyz` | none | Readiness: the store answered; `503` otherwise. |
 | GET | `/metrics` | none, or metrics token | Prometheus text: ingested, rejected and duplicate events, flows, stored events, WebSocket clients, sweeps. |
-| GET | `/v1/openapi.json` | none | OpenAPI document. |
+| GET | `/v1/openapi.json` | none | OpenAPI document. Only when `TRACERY_OPENAPI=1`; otherwise `404`. |
 | POST | `/v1/events` | ingest | Ingest an `ActivityBatch`. `200` all accepted, `207` some rejected, `400` bad envelope or over 1000 events. |
 | GET | `/v1/flows` | read | Flows, most recent activity first. `limit` (default 50, max 1000), `before` (the previous page's `nextBefore`), `status`, `actor`, `trace`, `q` (label substring). |
 | GET | `/v1/flows/:id` | read | Flow summary: ops, nodes, edges; no events. |

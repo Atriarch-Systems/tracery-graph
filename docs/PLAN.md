@@ -66,8 +66,8 @@ rules into the Python docstrings; the TS SDK imports the types from core).
 ## D — hub server
 
 Owns: `apps/hub` except `apps/hub/web` and `apps/hub/ee`.
-Deliver: SPEC §6. Fastify 5, `@fastify/websocket`, `@fastify/static`, `@fastify/swagger`
-(OpenAPI 3.1 at `/v1/openapi.json`); `src/config.ts` (env parsing with
+Deliver: SPEC §6. Fastify 5, `@fastify/websocket`, `@fastify/static`
+(OpenAPI 3.1 generated at build time with `@fastify/swagger`, a devDependency, shipped as `openapi.json`, served at `/v1/openapi.json` when `TRACERY_OPENAPI=1`); `src/config.ts` (env parsing with
 defaults), `src/auth.ts`, `src/store/{types,memory,sqlite}.ts`, `src/routes/*`,
 `src/live.ts`, `src/retention.ts`, `src/metrics.ts`, `src/server.ts`, `bin/hub.mjs`.
 Serve `apps/hub/web/dist` at `/ui` when present; otherwise `/ui` returns a
