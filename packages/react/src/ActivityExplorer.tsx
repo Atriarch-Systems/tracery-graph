@@ -12,7 +12,7 @@
  * card, reachable by keyboard and by automated testing without canvas hit
  * testing (`data-testid="node-item"`).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityGraph, placeBranches } from '@atriarch-systems/tracery-visualizer';
 import type { ActivityGraphHandle, ActivityGroup, Placement } from '@atriarch-systems/tracery-visualizer';
 import type { ActivityNode, NodeData, NodePresentation, NodeRecord, Flow, Scope } from '@atriarch-systems/tracery-core';
@@ -22,6 +22,7 @@ import { useProjection } from './useProjection.js';
 import { computeScope, scopeModeForKey, activatedFlow, isScopeShortcutTarget, SCOPE_LABELS, type ScopeMode } from './scope.js';
 import { latestFlows, latestFlowId } from './flow-order.js';
 import { Inspector, type InspectorSelection } from './Inspector.js';
+import { withNodeText } from './node-display.js';
 import { rootStyle, styles, type ActivityTheme } from './style.js';
 
 /** A share's fixed target (docs/SHARING.md): pass `useShareSource`'s `{ type, id }` straight through. */
@@ -77,6 +78,29 @@ export interface ActivityExplorerProps {
    * addition to that same drag's per-node `onNodeMove` calls.
    */
   readonly onGroupMove?: (group: ActivityGroup, positions: readonly { id: string; x: number; y: number }[]) => void;
+  /**
+   * Overrides the line under a node's title (default: the name of its latest op). Receives the node's
+   * canonical record and the flow it belongs to; return `undefined` to keep the default. Pass a
+   * stable (memoised) function: a new one on every render re-labels every node on every render.
+   */
+  readonly nodeDetail?: (node: NodeRecord, flow: Flow) => string | undefined;
+  /**
+   * Overrides a node's footer line (default: "N ops" or "N errors"). The footer is drawn only on
+   * cards at least 74 px tall, so give the card that height in `catalog`. Return `undefined` to keep
+   * the default. Pass a stable (memoised) function.
+   */
+  readonly nodeFooter?: (node: NodeRecord, flow: Flow) => string | undefined;
+  /** Whether to render the accessible node list under the graph. Default `true`. */
+  readonly showNodeList?: boolean;
+  /** Adds a header to the node list that collapses and expands it. Default `false`. */
+  readonly nodeListCollapsible?: boolean;
+  /** With `nodeListCollapsible`, start with the list collapsed. Default `false`. */
+  readonly nodeListInitiallyCollapsed?: boolean;
+  /**
+   * Forwarded to the graph: stops pulses, glows and travelling dots and finishes layout in a single
+   * step. Default: follow the user's `prefers-reduced-motion` setting.
+   */
+  readonly reducedMotion?: boolean;
 }
 
 const SCOPE_MODES: readonly ScopeMode[] = ['flow', 'ancestors', 'trace'];
@@ -87,8 +111,49 @@ function scopeModesFor(lockedTarget: LockedTarget | undefined): readonly ScopeMo
   return lockedTarget.type === 'trace' ? ['flow', 'trace'] : ['flow'];
 }
 
+/** One row per node, grouped by flow. Memoised so a selection or a still frame does not re-render hundreds of buttons. */
+const NodeList = memo(function NodeList(props: {
+  readonly groups: readonly { readonly id: string; readonly label: string; readonly nodeIds: readonly string[] }[];
+  readonly nodeById: ReadonlyMap<string, ActivityNode<NodeData>>;
+  readonly selectedNodeId: string | null;
+  readonly onSelect: (id: string) => void;
+  readonly onActivate: (node: ActivityNode<NodeData>) => void;
+}) {
+  const { groups, nodeById, selectedNodeId, onSelect, onActivate } = props;
+  return (
+    <>
+      {groups.map((group) => (
+        <details key={group.id} open>
+          <summary style={styles.muted}>{group.label}</summary>
+          {group.nodeIds.map((id) => {
+            const node = nodeById.get(id);
+            if (!node) return null;
+            return (
+              <button
+                key={id}
+                type="button"
+                data-testid="node-item"
+                data-node-id={id}
+                data-group-id={group.id}
+                style={styles.flowItem(id === selectedNodeId)}
+                onClick={() => onSelect(id)}
+                onDoubleClick={() => onActivate(node)}
+              >
+                {node.label} <span style={styles.muted}>({node.status ?? 'idle'})</span>
+              </button>
+            );
+          })}
+        </details>
+      ))}
+    </>
+  );
+});
+
 export function ActivityExplorer(props: ActivityExplorerProps) {
-  const { source, initialScope, catalog, renderInspector, theme, className, style, ariaLabel, readOnly, lockedTarget, graphRef, onNodeMove, onGroupMove } = props;
+  const { source, initialScope, catalog, renderInspector, theme, className, style, ariaLabel, readOnly, lockedTarget, graphRef, onNodeMove, onGroupMove, nodeDetail, nodeFooter, reducedMotion } = props;
+  const showNodeList = props.showNodeList ?? true;
+  const nodeListCollapsible = props.nodeListCollapsible ?? false;
+  const [nodeListCollapsed, setNodeListCollapsed] = useState(nodeListCollapsible && (props.nodeListInitiallyCollapsed ?? false));
   const availableScopeModes = useMemo(() => scopeModesFor(lockedTarget), [lockedTarget]);
 
   const [activeFlow, setActiveFlow] = useState<string | undefined>(() => {
@@ -101,7 +166,9 @@ export function ActivityExplorer(props: ActivityExplorerProps) {
   });
   const [followLatest, setFollowLatest] = useState(!lockedTarget && initialScope === undefined);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [placement, setPlacement] = useState(() => new Map<string, Placement>());
+  // Every placement made so far, fed back into the next projection so existing cards never move and
+  // only new ones are placed. A ref, not state: a live delta must not cost a second render.
+  const placement = useRef(new Map<string, Placement>());
   // Keep only explicit user moves here; automatic placements can be discarded when nodes
   // leave the view. Both caches are in-memory and disappear when the explorer unmounts.
   const manualPlacement = useRef(new Map<string, Placement>());
@@ -163,19 +230,32 @@ export function ActivityExplorer(props: ActivityExplorerProps) {
 
   const guided = useMemo(
     () => {
-      const previous = new Map(placement);
+      const previous = new Map(placement.current);
       for (const node of projection.nodes) {
         const moved = manualPlacement.current.get(placementKey(node.id));
         if (moved && !node.position?.anchored) previous.set(node.id, moved);
       }
       // Supply moved positions before admitting new nodes so branches grow beside their
       // actual parents and collision checks use the user's arrangement.
-      return placeBranches(hasScope ? projection.nodes : [], hasScope ? projection.edges : [], previous);
+      const placed = placeBranches(hasScope ? projection.nodes : [], hasScope ? projection.edges : [], previous);
+      placement.current = placed.positions;
+      return placed;
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- placementKey reads the scope, which hasScope/projection already follow
     [hasScope, projection.nodes, projection.edges],
   );
 
-  useEffect(() => setPlacement(guided.positions), [guided.positions]);
+  // Apply the host's `nodeDetail`/`nodeFooter` overrides to the placed nodes.
+  const displayNodes = useMemo(
+    () => withNodeText(guided.nodes, source.flows, nodeDetail, nodeFooter),
+    [guided.nodes, nodeDetail, nodeFooter, source.flows],
+  );
+
+  const nodeById = useMemo(() => new Map(displayNodes.map((n) => [n.id, n] as const)), [displayNodes]);
+  const graphGroups = useMemo(
+    () => projection.groups.map((g) => ({ id: g.id, label: g.label, dimmed: g.flow !== activeFlow })),
+    [projection.groups, activeFlow],
+  );
 
   const rememberNodeMove = (node: ActivityNode<NodeData>, position: { x: number; y: number }) => {
     const placed = guided.positions.get(node.id);
@@ -186,8 +266,8 @@ export function ActivityExplorer(props: ActivityExplorerProps) {
   };
 
   const selectedNode: InspectorSelection | null = useMemo(
-    () => (selectedNodeId ? (guided.nodes.find((n) => n.id === selectedNodeId) as ActivityNode<NodeData> | undefined) ?? null : null),
-    [guided.nodes, selectedNodeId],
+    () => (selectedNodeId ? nodeById.get(selectedNodeId) ?? null : null),
+    [nodeById, selectedNodeId],
   );
 
   // Merges this component's own handle onto `graph` with whatever `apiRef`
@@ -218,6 +298,9 @@ export function ActivityExplorer(props: ActivityExplorerProps) {
     const timers = [0, 200, 600].map((delay) => setTimeout(() => internalGraphRef.current?.fitView(), delay));
     return () => timers.forEach((timer) => clearTimeout(timer));
   }, [hasScope, guided.nodes.length]);
+
+  const fitGraph = useCallback(() => internalGraphRef.current?.fitView(), []);
+  const selectNode = useCallback((id: string) => setSelectedNodeId(id), []);
 
   const pickFlow = (id: string): void => {
     setFollowLatest(false);
@@ -351,11 +434,12 @@ export function ActivityExplorer(props: ActivityExplorerProps) {
           <div style={styles.graphCanvas}>
             {hasScope ? (
               <ActivityGraph
-                nodes={guided.nodes}
+                nodes={displayNodes}
                 edges={projection.edges}
-                groups={projection.groups.map((g) => ({ id: g.id, label: g.label, dimmed: g.flow !== activeFlow }))}
+                groups={graphGroups}
                 theme={theme?.graph}
                 layoutMode="guided"
+                reducedMotion={reducedMotion}
                 layoutKey={scope ? (scope.mode === 'trace' ? `trace:${scope.trace}` : `${scope.mode}:${scope.flow}`) : 'none'}
                 selectedNodeId={selectedNodeId}
                 onNodeSelect={(node) => setSelectedNodeId(node?.id ?? null)}
@@ -368,33 +452,37 @@ export function ActivityExplorer(props: ActivityExplorerProps) {
             ) : (
               <div style={{ ...styles.muted, padding: 16 }}>No flow selected.</div>
             )}
+            {hasScope && (
+              <div style={styles.graphToolbar} data-testid="graph-toolbar">
+                <button type="button" data-testid="fit-view" style={styles.toolbarButton} aria-label="Fit the graph to the view" onClick={fitGraph}>
+                  Fit
+                </button>
+              </div>
+            )}
           </div>
 
-          {hasScope && (
-            <div style={styles.nodeList} data-testid="node-list">
-              {projection.groups.map((group) => (
-                <details key={group.id} open>
-                  <summary style={styles.muted}>{group.label}</summary>
-                  {group.nodeIds.map((id) => {
-                    const node = guided.nodes.find((n) => n.id === id);
-                    if (!node) return null;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        data-testid="node-item"
-                        data-node-id={id}
-                        data-group-id={group.id}
-                        style={styles.flowItem(id === selectedNodeId)}
-                        onClick={() => setSelectedNodeId(id)}
-                        onDoubleClick={() => activate(node as ActivityNode<NodeData>)}
-                      >
-                        {node.label} <span style={styles.muted}>({node.status ?? 'idle'})</span>
-                      </button>
-                    );
-                  })}
-                </details>
-              ))}
+          {hasScope && showNodeList && (
+            <div style={styles.nodeList} data-testid="node-list" data-collapsed={nodeListCollapsed ? 'true' : 'false'}>
+              {nodeListCollapsible && (
+                <button
+                  type="button"
+                  data-testid="node-list-toggle"
+                  aria-expanded={!nodeListCollapsed}
+                  style={styles.nodeListToggle}
+                  onClick={() => setNodeListCollapsed((collapsed) => !collapsed)}
+                >
+                  <span aria-hidden="true">{nodeListCollapsed ? '▸' : '▾'}</span> Nodes ({displayNodes.length})
+                </button>
+              )}
+              {!nodeListCollapsed && (
+                <NodeList
+                  groups={projection.groups}
+                  nodeById={nodeById}
+                  selectedNodeId={selectedNodeId}
+                  onSelect={selectNode}
+                  onActivate={activate}
+                />
+              )}
             </div>
           )}
         </div>

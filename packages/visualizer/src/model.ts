@@ -47,6 +47,8 @@ export function reconcile(previous: RuntimeGraph, nodes: readonly ActivityNode[]
   }
   const edgeIds = new Set<string>();
   const links: RuntimeEdge[] = [];
+  // Reuse a link object (and so the endpoints force-graph already resolved on it) while its ends are unchanged.
+  const oldLinks = new Map(previous.links.map(l => [l.id, l]));
   for (const spec of edges) {
     if (edgeIds.has(spec.id)) {
       console.warn('[tracery-visualizer] dropping duplicate activity edge ID:', spec.id);
@@ -54,9 +56,25 @@ export function reconcile(previous: RuntimeGraph, nodes: readonly ActivityNode[]
     }
     edgeIds.add(spec.id);
     // Partial streams can deliver edges first. Render once both nodes exist.
-    if (ids.has(spec.source) && ids.has(spec.target)) links.push({ id: spec.id, source: spec.source, target: spec.target, spec });
+    if (!ids.has(spec.source) || !ids.has(spec.target)) continue;
+    const reused = oldLinks.get(spec.id);
+    if (reused && endpointId(reused.source) === spec.source && endpointId(reused.target) === spec.target) {
+      reused.spec = spec;
+      links.push(reused);
+    } else links.push({ id: spec.id, source: spec.source, target: spec.target, spec });
   }
   return { nodes: next, links };
+}
+
+const endpointId = (end: string | RuntimeNode): string => typeof end === 'string' ? end : end.id;
+
+/** Whether `next` holds exactly the node and link objects `previous` does, in the same order. A data-only
+ * update (a node's label, status or activity changed) reconciles to the same objects, so the renderer
+ * needs a redraw, not a new graph: handing it a new graph re-initialises its links and reheats the
+ * simulation. */
+export function sameStructure(previous: RuntimeGraph, next: RuntimeGraph): boolean {
+  return previous.nodes.length === next.nodes.length && previous.links.length === next.links.length &&
+    previous.nodes.every((n, i) => n === next.nodes[i]) && previous.links.every((l, i) => l === next.links[i]);
 }
 
 /** Only executing, highlighted nodes animate; completion stops the pulse immediately. */

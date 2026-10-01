@@ -112,16 +112,50 @@ function pointInPolygon(point: Point, polygon: readonly Point[]): boolean {
 export function hitTestGroup(group: ActivityGroup, members: readonly RuntimeNode[], point: Point): boolean {
   void group; // shape depends only on member positions; kept for a symmetrical, self-describing call site
   if (members.length === 0) return false;
-  const shape = groupHullShape(members);
+  return hitTestShape(groupHullShape(members), point);
+}
+
+/** Whether `point` lies in an already computed hull shape (see `HullCache`). */
+export function hitTestShape(shape: GroupHullShape, point: Point): boolean {
   return shape.kind === 'rect'
     ? point.x >= shape.x0 && point.x <= shape.x1 && point.y >= shape.y0 && point.y <= shape.y1
     : pointInPolygon(point, shape.points);
 }
 
+/**
+ * Members and hull shapes per group, valid for one layout version. Computing a hull sorts four
+ * corners per member on every frame; node positions only change while something moves them, so the
+ * owner bumps `version` then (drag, engine tick, new graph) and a still graph reuses the shapes.
+ */
+export class HullCache {
+  private version = Number.NaN;
+  private members = new Map<string, RuntimeNode[]>();
+  private shapes = new Map<string, GroupHullShape>();
+
+  /** Drops everything unless `version` is the one the cache was filled for. */
+  sync(version: number): void {
+    if (version === this.version) return;
+    this.version = version;
+    this.members.clear();
+    this.shapes.clear();
+  }
+
+  membersOf(nodes: readonly RuntimeNode[], groups: readonly ActivityGroup[]): Map<string, RuntimeNode[]> {
+    if (this.members.size === 0) for (const [id, list] of groupMembers(nodes, groups)) this.members.set(id, list);
+    return this.members;
+  }
+
+  shapeOf(groupId: string, members: readonly RuntimeNode[]): GroupHullShape {
+    let shape = this.shapes.get(groupId);
+    if (!shape) { shape = groupHullShape(members); this.shapes.set(groupId, shape); }
+    return shape;
+  }
+}
+
 /** Draws one group's hull (filled at low alpha, stroked faintly) and its label. One and two
  * member groups use a padded, rounded bounding rectangle (a proper hull looks like a sliver at
  * that size); three or more members get a rounded convex hull around the padded card corners. */
-export function drawGroupHull(ctx: CanvasRenderingContext2D, group: ActivityGroup, members: readonly RuntimeNode[], theme: GraphTheme = DEFAULT_GRAPH_THEME) {
+export function drawGroupHull(ctx: CanvasRenderingContext2D, group: ActivityGroup, members: readonly RuntimeNode[], theme: GraphTheme = DEFAULT_GRAPH_THEME, precomputed?: GroupHullShape) {
   if (members.length === 0) return;
   const color = hex(group.accent, theme.groupAccentFallback);
   const [r, g, b] = rgb(color);
@@ -131,7 +165,7 @@ export function drawGroupHull(ctx: CanvasRenderingContext2D, group: ActivityGrou
   ctx.fillStyle = `rgba(${r},${g},${b},0.12)`;
   ctx.strokeStyle = `rgba(${r},${g},${b},0.35)`;
   ctx.lineWidth = 1;
-  const shape = groupHullShape(members);
+  const shape = precomputed ?? groupHullShape(members);
   if (shape.kind === 'rect') {
     ctx.beginPath();
     ctx.roundRect(shape.x0, shape.y0, shape.x1 - shape.x0, shape.y1 - shape.y0, HULL_RADIUS);
@@ -153,16 +187,21 @@ export function drawGroupHull(ctx: CanvasRenderingContext2D, group: ActivityGrou
 
 /** Draws every configured group with live members, beneath the nodes. Call from
  * `onRenderFramePre` so hulls land under the node/link canvas objects. */
-export function drawGroups(ctx: CanvasRenderingContext2D, groups: readonly ActivityGroup[], nodes: readonly RuntimeNode[], theme: GraphTheme = DEFAULT_GRAPH_THEME) {
+export function drawGroups(ctx: CanvasRenderingContext2D, groups: readonly ActivityGroup[], nodes: readonly RuntimeNode[], theme: GraphTheme = DEFAULT_GRAPH_THEME, cache?: HullCache) {
   if (groups.length === 0) return;
-  const members = groupMembers(nodes, groups);
-  for (const group of groups) drawGroupHull(ctx, group, members.get(group.id) ?? [], theme);
+  const members = cache ? cache.membersOf(nodes, groups) : groupMembers(nodes, groups);
+  for (const group of groups) {
+    const list = members.get(group.id) ?? [];
+    drawGroupHull(ctx, group, list, theme, cache && list.length > 0 ? cache.shapeOf(group.id, list) : undefined);
+  }
 }
 
 /** Per-node alpha multiplier so a dimmed group's member cards render at 45% alpha too. */
-export function groupAlpha(node: RuntimeNode, groups: readonly ActivityGroup[]): number {
+export function groupAlpha(node: RuntimeNode, groups: readonly ActivityGroup[] | ReadonlySet<string>): number {
   const id = node.spec.group;
   if (id === undefined) return 1;
-  const group = groups.find(g => g.id === id);
+  // A set holds the ids of the dimmed groups (an O(1) lookup per node per frame).
+  if (groups instanceof Set) return groups.has(id) ? 0.45 : 1;
+  const group = (groups as readonly ActivityGroup[]).find(g => g.id === id);
   return group?.dimmed ? 0.45 : 1;
 }

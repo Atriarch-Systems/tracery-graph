@@ -1,11 +1,11 @@
 "use client";
-import { useEffect, useMemo, useRef, useState, useImperativeHandle, type ComponentType } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useImperativeHandle, type ComponentType } from 'react';
 import type { ForceGraphMethods, ForceGraphProps } from 'react-force-graph-2d';
 import { forceCollide } from 'd3-force';
 import type { ActivityGraphProps, ActivityNode, ActivityGroup } from './types.js';
-import { emptyGraph, reconcile, box, isNodeActive, type RuntimeGraph, type RuntimeNode, type RuntimeEdge } from './model.js';
+import { emptyGraph, reconcile, sameStructure, box, isNodeActive, type RuntimeGraph, type RuntimeNode, type RuntimeEdge } from './model.js';
 import { drawNode, drawLink } from './drawing.js';
-import { drawGroups, groupAlpha, groupMembers, hitTestGroup } from './groups.js';
+import { drawGroups, groupAlpha, HullCache, hitTestShape } from './groups.js';
 import { resolveGraphTheme } from './theme.js';
 import { detectDoubleClick, emptyDoubleClickState, type DoubleClickState } from './activate.js';
 import { renderCapture, captureToBlob, type CaptureOptions } from './capture.js';
@@ -21,6 +21,12 @@ function waitOneFrame(): Promise<void> {
  * group drag rather than a click. `screen2GraphCoords` already divides by the current zoom
  * scale, so a flat graph-unit threshold behaves like a few screen pixels at any zoom level. */
 const GROUP_DRAG_THRESHOLD = 4;
+/** Beyond this many nodes the glow (canvas `shadowBlur`, a CPU-bound effect) is not drawn. */
+const SHADOW_NODE_LIMIT = 150;
+/** How long the graph stays fully idle (engine stopped, nothing animating) before its frame loop is paused. */
+const IDLE_PAUSE_MS = 600;
+/** Pan/zoom must be still this long before the pointer (hit) canvas is repainted for the new view. */
+const ZOOM_SETTLE_MS = 120;
 
 type GroupDragState = {
   readonly pointerId: number;
@@ -44,27 +50,45 @@ function pointHitsAnyNode(nodes: readonly RuntimeNode[], point: { x: number; y: 
 
 /** No transports, agent catalogs, invocation reducers, or business data live here. */
 export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProps<N, E>) {
-  const { nodes, edges, layoutKey, apiRef, onNodeSelect, onNodeMove } = props;
+  const { nodes, edges, layoutKey, apiRef } = props;
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ForceGraphMethods<RuntimeNode, RuntimeEdge> | undefined>(undefined);
   const runtime = useRef<RuntimeGraph>(emptyGraph());
   const lastKey = useRef(layoutKey);
+  const lastMode = useRef(props.layoutMode);
   const lastClick = useRef<DoubleClickState>(emptyDoubleClickState());
   const groupDrag = useRef<GroupDragState | null>(null);
   const dragListeners = useRef<{ move: (e: PointerEvent) => void; up: (e: PointerEvent) => void } | null>(null);
   const hoverCursor = useRef<'default' | 'grab' | 'grabbing'>('default');
+  // The latest props, for the stable canvas callbacks below: they must keep their identity across
+  // renders (a new callback makes force-graph repaint its hit canvas synchronously), so they read
+  // whatever they need from here instead of closing over this render's values.
+  const latest = useRef(props);
+  latest.current = props;
+  // Bumped whenever a node can have moved or the node set changed; keys the group hull cache.
+  const layoutVersion = useRef(0);
+  const hulls = useRef(new HullCache());
+  const engineRunning = useRef(false);
+  const hitPending = useRef(false);
+  const zoomTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [graph, setGraph] = useState<RuntimeGraph>(emptyGraph);
   const [size, setSize] = useState({ width: 1000, height: 700 });
   const [systemReduced, setSystemReduced] = useState(false);
   const [visible, setVisible] = useState(true);
-  const [settled, setSettled] = useState(false);
-  const [interaction, setInteraction] = useState(0);
+  /** Hit canvas refresh token: a new `nodePointerAreaPaint` makes force-graph repaint it at once. */
+  const [hitVersion, setHitVersion] = useState(0);
+  /** True while the animated parts of the graph (pulses, fades, travelling dots) need every frame. */
+  const [animating, setAnimating] = useState(false);
+  /** True while a group drag moves nodes outside the force engine. */
+  const [dragging, setDragging] = useState(false);
+  const [engineStops, setEngineStops] = useState(0);
   const [localSelected, setLocalSelected] = useState<string | null>(null);
   const [Renderer, setRenderer] = useState<ComponentType<ForceGraphProps<RuntimeNode, RuntimeEdge> & { ref?: typeof api }> | null>(null);
   const [loadError, setLoadError] = useState(false);
   const reduced = props.reducedMotion ?? systemReduced;
   const selected = props.selectedNodeId === undefined ? localSelected : props.selectedNodeId;
   const { x = 0, y = 0, width = 1220, height = 660 } = props.view ?? {};
+  const guided = props.layoutMode === 'guided';
 
   useEffect(() => {
     let disposed = false;
@@ -75,12 +99,30 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
     return () => { disposed = true; };
   }, []);
 
+  /** Repaints the pointer (hit) canvas for the current node positions now, not on force-graph's 800 ms
+   * throttle: once immediately and once after the next frame, when force-graph has queued its own paint. */
+  const refreshHitArea = useCallback(() => {
+    setHitVersion(v => v + 1);
+    if (hitPending.current || typeof requestAnimationFrame !== 'function') return;
+    hitPending.current = true;
+    requestAnimationFrame(() => { hitPending.current = false; setHitVersion(v => v + 1); });
+  }, []);
+
+  // New data keeps every existing node object (so positions survive) and reuses unchanged links. When
+  // only node/edge data changed the renderer keeps its graph and just repaints; only an added or
+  // removed node or edge hands it a new graph (and, in force mode, reheats the layout).
   useEffect(() => {
+    const modeChanged = lastMode.current !== props.layoutMode;
+    lastMode.current = props.layoutMode;
     const previous = lastKey.current === layoutKey ? runtime.current : emptyGraph();
     lastKey.current = layoutKey;
-    runtime.current = reconcile(previous, nodes, edges, props.layoutMode);
-    setGraph(runtime.current); setSettled(false);
-  }, [nodes, edges, layoutKey, props.layoutMode]);
+    const next = reconcile(previous, nodes, edges, props.layoutMode);
+    runtime.current = next;
+    layoutVersion.current++;
+    if (!modeChanged && previous.nodes.length > 0 && sameStructure(previous, next)) return;
+    setGraph(next);
+    refreshHitArea();
+  }, [nodes, edges, layoutKey, props.layoutMode, refreshHitArea]);
 
   useEffect(() => {
     if (!host.current) return;
@@ -97,47 +139,75 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
     return () => { resize.disconnect(); intersection.disconnect(); document.removeEventListener('visibilitychange', updateVisibility); media.removeEventListener('change', updateMotion); };
   }, []);
 
+  useEffect(() => () => clearTimeout(zoomTimer.current), []);
+
   useEffect(() => {
     if (!Renderer || !api.current) return;
     const force = api.current;
     force.d3Force('center', null);
-    force.d3Force('charge')?.strength(props.layoutMode === 'guided' ? 0 : -90);
-    force.d3Force('link')?.distance(180).strength(props.layoutMode === 'guided' ? 0 :
+    force.d3Force('charge')?.strength(guided ? 0 : -90);
+    force.d3Force('link')?.distance(180).strength(guided ? 0 :
       (link: RuntimeEdge) => (link.spec.kind === 'data' || link.spec.kind === 'spawn') ? 0 : 0.025);
-    force.d3Force('collision', forceCollide<RuntimeNode>(n => Math.hypot(box(n).w, box(n).h) / 2 + 9).strength(props.layoutMode === 'guided' ? 0 : .85));
+    // Guided cards are pinned, so collisions can never move one; leaving the force out saves a quadtree per tick.
+    force.d3Force('collision', guided ? null : forceCollide<RuntimeNode>(n => Math.hypot(box(n).w, box(n).h) / 2 + 9).strength(.85));
     force.d3Force('home', (alpha: number) => {
       for (const n of runtime.current.nodes) {
         if (n.spec.position?.anchored || n.placed) continue;
-        n.vx = (n.vx ?? 0) + (n.homeX - n.x) * alpha * (props.layoutMode === 'guided' ? .8 : .09);
-        n.vy = (n.vy ?? 0) + (n.homeY - n.y) * alpha * (props.layoutMode === 'guided' ? .8 : .09);
+        n.vx = (n.vx ?? 0) + (n.homeX - n.x) * alpha * (guided ? .8 : .09);
+        n.vy = (n.vy ?? 0) + (n.homeY - n.y) * alpha * (guided ? .8 : .09);
       }
     });
-  }, [Renderer, props.layoutMode]);
+  }, [Renderer, guided]);
 
   useEffect(() => {
     api.current?.centerAt(x, y);
     api.current?.zoom(Math.min(size.width / Math.max(1, width), size.height / Math.max(1, height)));
   }, [Renderer, size.width, size.height, x, y, width, height, layoutKey]);
 
+  // Which parts of the graph are animated right now: a running node pulses, and entering, updating,
+  // completing and removed nodes and edges fade for a moment. Only then does the canvas repaint every
+  // frame; otherwise it repaints on change (see `autoPauseRedraw` below).
+  useEffect(() => {
+    const now = Date.now();
+    if (!reduced && nodes.some(n => isNodeActive(n, now))) { setAnimating(true); return; }
+    const transitions = [...nodes.map(n => n.activity), ...edges.map(l => l.activity)];
+    const until = transitions.reduce((max, a) => Math.max(max, (a?.enteredAt ?? 0) + 450,
+      (a?.removedAt ?? 0) + 1000, (a?.completedAt ?? 0) + 1000, (a?.updatedAt ?? 0) + 850), now);
+    if (until <= now) { setAnimating(false); return; }
+    setAnimating(true);
+    const timer = setTimeout(() => setAnimating(false), Math.max(500, until - now + 30));
+    return () => clearTimeout(timer);
+  }, [nodes, edges, reduced]);
+
+  // Frame loop: running while the tab is visible and anything is moving or animating. When the layout
+  // engine has stopped and nothing animates, the loop is paused after a short grace period. Never
+  // while the engine is still cooling down: freezing it mid-cooldown makes the next pointerdown replay
+  // the remaining ticks in one burst. Every interaction and data change resumes it.
   useEffect(() => {
     const force = api.current;
     if (!force) return;
     if (!visible) { force.pauseAnimation(); return; }
     force.resumeAnimation();
-    if (!settled) return;
-    const now = Date.now();
-    const running = graph.nodes.some(n => isNodeActive(n.spec, now));
-    if (running && !reduced) return;
-    const transitions = [...graph.nodes.map(n => n.spec.activity), ...graph.links.map(l => l.spec.activity)];
-    const until = transitions.reduce((max, a) => Math.max(max, (a?.enteredAt ?? 0) + 450,
-      (a?.removedAt ?? 0) + 1000, (a?.completedAt ?? 0) + 1000, (a?.updatedAt ?? 0) + 850), now);
-    const timer = setTimeout(() => force.pauseAnimation(), Math.max(500, until - now + 30));
+    if (animating || dragging) return;
+    const timer = setTimeout(() => { if (!engineRunning.current) force.pauseAnimation(); }, IDLE_PAUSE_MS);
     return () => clearTimeout(timer);
-  }, [Renderer, graph, visible, settled, reduced, selected, interaction]);
+  }, [Renderer, visible, animating, dragging, engineStops, nodes, edges, selected, reduced, hitVersion]);
+
+  /** Wakes the frame loop (it may be paused when idle); the idle effect above pauses it again later. */
+  const wake = useCallback(() => { api.current?.resumeAnimation(); }, []);
 
   const fitView = (durationMs = reduced ? 0 : 400) => {
-    api.current?.resumeAnimation(); api.current?.zoomToFit(durationMs, 85);
-    setInteraction(n => n + 1);
+    const force = api.current;
+    if (!force) return;
+    wake();
+    // zoomToFit frames node centres only, so the padding has to cover half a card plus a margin or the
+    // outer cards are cut by the canvas edge; it is capped so a small canvas still leaves room to draw.
+    let half = 0;
+    for (const n of runtime.current.nodes) { const { w, h } = box(n); half = Math.max(half, w / 2, h / 2); }
+    const available = Math.min(host.current?.clientWidth || size.width, host.current?.clientHeight || size.height);
+    const padding = Math.max(8, Math.min(Math.max(85, half + 16), available / 4));
+    force.zoomToFit(durationMs, padding);
+    refreshHitArea();
   };
   const toImage = async (options?: CaptureOptions): Promise<Blob> => {
     fitView(0);
@@ -152,13 +222,77 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
     }, options);
     return captureToBlob(captured);
   };
-  useImperativeHandle(apiRef, () => ({ fitView, toImage }), [reduced]);
-  const select = (node: ActivityNode | null) => {
-    setLocalSelected(node?.id ?? null);
-    onNodeSelect?.(node as ActivityNode<N> | null);
-  };
+  useImperativeHandle(apiRef, () => ({ fitView, toImage }), [reduced, size.width, size.height]);
+
   const groups = props.groups ?? [];
+  // Groups arrive as a fresh array every render; what matters to painting is their content.
+  const groupsKey = groups.map(g => `${g.id}\u0000${g.label}\u0000${g.accent ?? ''}\u0000${g.dimmed ? 1 : 0}`).join('\u0001');
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- groupsKey stands for the group list's content
+  const dimmedGroups = useMemo(() => new Set(groupsRef.current.filter(g => g.dimmed).map(g => g.id)), [groupsKey]);
   const theme = useMemo(() => resolveGraphTheme(props.theme), [props.theme]);
+  const shadows = !reduced && nodes.length <= SHADOW_NODE_LIMIT;
+  useEffect(() => { layoutVersion.current++; }, [groupsKey]);
+
+  // Canvas callbacks. Each one is a stable identity that changes exactly when something it draws
+  // changes (selection, theme, groups, data...), and force-graph repaints on that change; unrelated
+  // renders leave them alone.
+  const paintNode = useCallback((n: RuntimeNode, ctx: CanvasRenderingContext2D) =>
+    drawNode(n, ctx, selected ?? null, reduced, groupAlpha(n, dimmedGroups), theme, shadows),
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- nodes/edges: a data change mutates the runtime nodes in place, and the new identity is what requests the repaint
+  [selected, reduced, dimmedGroups, theme, shadows, nodes, edges]);
+  const paintLink = useCallback((l: RuntimeEdge, ctx: CanvasRenderingContext2D) => drawLink(l, ctx, selected ?? null, reduced, theme, shadows),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [selected, reduced, theme, shadows, nodes, edges]);
+  const paintGroups = useCallback((ctx: CanvasRenderingContext2D) => {
+    hulls.current.sync(layoutVersion.current);
+    drawGroups(ctx, groupsRef.current, runtime.current.nodes, theme, hulls.current);
+  }, [theme]);
+  const paintPointerArea = useCallback((n: RuntimeNode, color: string, ctx: CanvasRenderingContext2D) => {
+    const { w, h } = box(n); ctx.fillStyle = color; ctx.fillRect(n.x - w / 2, n.y - h / 2, w, h);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- hitVersion is the refresh token, not an input
+  }, [hitVersion]);
+  const hideLabel = useCallback(() => '', []);
+
+  const select = useCallback((node: ActivityNode | null) => {
+    setLocalSelected(node?.id ?? null);
+    latest.current.onNodeSelect?.(node as ActivityNode<N> | null);
+  }, []);
+
+  const handleNodeClick = useCallback((n: RuntimeNode) => {
+    select(n.spec);
+    const { activated, next } = detectDoubleClick(lastClick.current, n.id, Date.now());
+    lastClick.current = next;
+    if (activated) latest.current.onNodeActivate?.(n.spec as ActivityNode<N>);
+  }, [select]);
+  const handleBackgroundClick = useCallback(() => select(null), [select]);
+
+  const handleNodeDrag = useCallback(() => { layoutVersion.current++; }, []);
+  const handleNodeDragEnd = useCallback((n: RuntimeNode) => {
+    const anchored = n.spec.position?.anchored;
+    if (anchored) { n.fx = n.homeX; n.fy = n.homeY; }
+    // Guided layout: the dropped card is pinned where it landed and only the canvas repaints; nothing is re-placed.
+    if (latest.current.layoutMode === 'guided' && !anchored) { n.fx = n.x; n.fy = n.y; n.placed = true; }
+    layoutVersion.current++;
+    latest.current.onNodeMove?.(n.spec as ActivityNode<N>, { x: anchored ? n.homeX : n.x, y: anchored ? n.homeY : n.y });
+    // The card moved: the next grab, a moment later, must find it where it now is.
+    refreshHitArea();
+  }, [refreshHitArea]);
+  const handleEngineTick = useCallback(() => { engineRunning.current = true; layoutVersion.current++; }, []);
+  const handleEngineStop = useCallback(() => {
+    if (latest.current.layoutMode === 'guided') for (const n of runtime.current.nodes) {
+      n.fx = n.x; n.fy = n.y; n.placed = true;
+    }
+    engineRunning.current = false;
+    layoutVersion.current++;
+    setEngineStops(c => c + 1);
+    refreshHitArea();
+  }, [refreshHitArea]);
+  const handleZoomEnd = useCallback(() => {
+    clearTimeout(zoomTimer.current);
+    zoomTimer.current = setTimeout(refreshHitArea, ZOOM_SETTLE_MS);
+  }, [refreshHitArea]);
 
   // Draggable group hulls (guided layout only): clicking and dragging inside a hull's own area,
   // away from any node, moves every member node of that group together, preserving their
@@ -181,13 +315,14 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
 
   const groupAtPoint = (point: { x: number; y: number }): { group: ActivityGroup; members: RuntimeNode[] } | undefined => {
     if (groups.length === 0) return undefined;
-    const byGroup = groupMembers(runtime.current.nodes, groups);
+    hulls.current.sync(layoutVersion.current);
+    const byGroup = hulls.current.membersOf(runtime.current.nodes, groups);
     // drawGroups renders groups in array order, so a later group's hull paints over an earlier
     // one's where they overlap; hit-testing in reverse matches whichever hull is visually on top.
     for (let i = groups.length - 1; i >= 0; i--) {
       const group = groups[i]!;
       const members = byGroup.get(group.id) ?? [];
-      if (hitTestGroup(group, members, point)) return { group, members };
+      if (members.length > 0 && hitTestShape(hulls.current.shapeOf(group.id, members), point)) return { group, members };
     }
     return undefined;
   };
@@ -230,22 +365,24 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
       dragging: false,
     };
     groupDrag.current = state;
-    api.current?.resumeAnimation(); // the plain onPointerDown handler below never runs for an intercepted gesture
+    wake(); // the plain onPointerDown handler below never runs for an intercepted gesture
     setHostCursor('grabbing');
+    const byId = new Map(runtime.current.nodes.map(n => [n.id, n]));
 
     const handleMove = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== state.pointerId) return;
       const p = screenToGraphPoint(moveEvent.clientX, moveEvent.clientY);
       if (!p) return;
       const deltaX = p.x - state.startX, deltaY = p.y - state.startY;
-      if (!state.dragging && Math.hypot(deltaX, deltaY) > GROUP_DRAG_THRESHOLD) state.dragging = true;
+      if (!state.dragging && Math.hypot(deltaX, deltaY) > GROUP_DRAG_THRESHOLD) { state.dragging = true; setDragging(true); }
       if (!state.dragging) return;
       for (const member of state.members) {
-        const node = runtime.current.nodes.find(n => n.id === member.id);
+        const node = byId.get(member.id);
         if (!node) continue;
         node.x = member.x + deltaX; node.y = member.y + deltaY;
         node.fx = node.x; node.fy = node.y;
       }
+      layoutVersion.current++;
     };
 
     const handleUp = (upEvent: PointerEvent) => {
@@ -264,7 +401,7 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
       }
       const positions: { id: string; x: number; y: number }[] = [];
       for (const member of state.members) {
-        const node = runtime.current.nodes.find(n => n.id === member.id);
+        const node = byId.get(member.id);
         if (!node) continue;
         if (node.spec.position?.anchored) {
           // Matches onNodeDragEnd's existing rule exactly: an anchored node snaps back home and
@@ -273,11 +410,13 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
         } else {
           node.fx = node.x; node.fy = node.y; node.placed = true;
           positions.push({ id: node.id, x: node.x, y: node.y });
-          onNodeMove?.(node.spec as ActivityNode<N>, { x: node.x, y: node.y });
+          latest.current.onNodeMove?.(node.spec as ActivityNode<N>, { x: node.x, y: node.y });
         }
       }
-      props.onGroupMove?.(state.group, positions);
-      setInteraction(i => i + 1);
+      layoutVersion.current++;
+      latest.current.onGroupMove?.(state.group, positions);
+      setDragging(false);
+      refreshHitArea();
     };
 
     dragListeners.current = { move: handleMove, up: handleUp };
@@ -285,11 +424,12 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
     window.addEventListener('pointerup', handleUp);
   };
 
+  const selectedNode = selected === null ? undefined : nodes.find(n => n.id === selected);
   return <div ref={host} className={props.className} style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', ...props.style }}
     role="region" tabIndex={0} aria-label={props.ariaLabel ?? 'Activity graph. Arrow keys select nodes; Enter activates the selected node; Escape clears selection; F fits the view.'}
     onPointerDownCapture={beginGroupDrag}
     onMouseDownCapture={event => { if (groupDrag.current) event.stopPropagation(); }}
-    onPointerDown={() => { api.current?.resumeAnimation(); }}
+    onPointerDown={wake}
     onPointerMove={event => {
       if (groupDrag.current) return; // the window-level listeners above are driving the live drag
       if (props.layoutMode !== 'guided' || typeof api.current?.screen2GraphCoords !== 'function' || event.buttons !== 0) { setHostCursor('default'); return; }
@@ -297,8 +437,9 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
       if (!point || pointHitsAnyNode(runtime.current.nodes, point)) { setHostCursor('default'); return; }
       setHostCursor(groupAtPoint(point) ? 'grab' : 'default');
     }}
-    onPointerUp={() => setInteraction(n => n + 1)} onWheel={() => setInteraction(n => n + 1)}
+    onWheel={wake}
     onKeyDown={event => {
+      wake();
       if (event.key === 'Escape') { select(null); event.preventDefault(); }
       if (event.key.toLowerCase() === 'f') { fitView(); event.preventDefault(); }
       if (event.key === 'Enter' && selected) {
@@ -312,35 +453,22 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
       }
     }}>
     {Renderer && <Renderer ref={api} graphData={graph} width={size.width} height={size.height}
-      backgroundColor="rgba(0,0,0,0)" nodeCanvasObject={(n, ctx) => drawNode(n, ctx, selected ?? null, reduced, groupAlpha(n, groups), theme)}
-      linkCanvasObject={(l, ctx) => drawLink(l, ctx, selected ?? null, reduced, theme)}
-      onRenderFramePre={ctx => drawGroups(ctx, groups, runtime.current.nodes, theme)}
-      nodeLabel={() => ''} linkLabel={() => ''} autoPauseRedraw={false}
-      nodePointerAreaPaint={(n, color, ctx) => { const {w,h} = box(n); ctx.fillStyle = color; ctx.fillRect(n.x-w/2,n.y-h/2,w,h); }}
-      onNodeClick={n => {
-        select(n.spec);
-        const { activated, next } = detectDoubleClick(lastClick.current, n.id, Date.now());
-        lastClick.current = next;
-        if (activated) props.onNodeActivate?.(n.spec as ActivityNode<N>);
-      }} onBackgroundClick={() => select(null)}
-      onNodeDragEnd={n => {
-        if (n.spec.position?.anchored) { n.fx = n.homeX; n.fy = n.homeY; }
-        if (props.layoutMode === 'guided' && !n.spec.position?.anchored) {
-          n.fx = n.x; n.fy = n.y; n.placed = true;
-        }
-        onNodeMove?.(n.spec as ActivityNode<N>, { x: n.spec.position?.anchored ? n.homeX : n.x, y: n.spec.position?.anchored ? n.homeY : n.y });
-        setInteraction(i => i + 1);
-      }}
-      onEngineStop={() => {
-        if (props.layoutMode === 'guided') for (const n of runtime.current.nodes) {
-          n.fx = n.x; n.fy = n.y; n.placed = true;
-        }
-        setSettled(true);
-      }}
-      d3VelocityDecay={.62} d3AlphaDecay={.035} cooldownTicks={reduced ? 1 : 100} minZoom={.25} maxZoom={2.5} />}
+      backgroundColor="rgba(0,0,0,0)" nodeCanvasObject={paintNode}
+      linkCanvasObject={paintLink}
+      onRenderFramePre={paintGroups}
+      nodeLabel={hideLabel} linkLabel={hideLabel}
+      // Repaint every frame only while something animates or moves; otherwise on change. The hit canvas
+      // is repainted on its own schedule (see refreshHitArea), so a still graph costs no frames.
+      autoPauseRedraw={!animating && !dragging}
+      nodePointerAreaPaint={paintPointerArea}
+      onNodeClick={handleNodeClick} onBackgroundClick={handleBackgroundClick}
+      onNodeDrag={handleNodeDrag} onNodeDragEnd={handleNodeDragEnd}
+      onEngineTick={handleEngineTick} onEngineStop={handleEngineStop} onZoomEnd={handleZoomEnd}
+      // Guided cards are all pinned, so one tick finishes the layout: a drop must not restart a hundred-tick simulation.
+      d3VelocityDecay={.62} d3AlphaDecay={.035} cooldownTicks={guided || reduced ? 1 : 100} minZoom={.25} maxZoom={2.5} />}
     {loadError && <p role="alert">The graph renderer could not be loaded.</p>}
     <span aria-live="polite" style={{ position:'absolute', width:1, height:1, overflow:'hidden', clipPath:'inset(50%)' }}>
-      {nodes.find(n => n.id === selected)?.label ?? 'No node selected'}
+      {selectedNode?.label ?? 'No node selected'}
     </span>
   </div>;
 }

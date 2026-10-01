@@ -12,6 +12,12 @@ export interface ActivityThemeVars {
   readonly accent?: string;
   readonly muted?: string;
   readonly error?: string;
+  /** Panel and divider lines (`--tracery-border`): the inspector, sidebar, header and node list edges. */
+  readonly border?: string;
+  /** Background of the graph canvas (`--tracery-canvas-bg`). Default: transparent (the explorer background). */
+  readonly canvasBg?: string;
+  /** Background of the node list under the graph (`--tracery-panel-bg`). Default: transparent. */
+  readonly panelBg?: string;
 }
 
 /**
@@ -39,6 +45,8 @@ const DEFAULTS = {
 } as const;
 
 const v = (name: string, fallback: string): string => `var(--tracery-${name}, ${fallback})`;
+/** Every divider line reads `--tracery-border`, so a host themes all panel edges from one variable. */
+const border = v('border', DEFAULTS.border);
 
 /** The root element sets the CSS variables (from `theme`, when given) that every other style reads. */
 export function rootStyle(theme?: ActivityThemeVars): CSSProperties {
@@ -48,6 +56,10 @@ export function rootStyle(theme?: ActivityThemeVars): CSSProperties {
     ['--tracery-accent' as string]: theme?.accent ?? DEFAULTS.accent,
     ['--tracery-muted' as string]: theme?.muted ?? DEFAULTS.muted,
     ['--tracery-error' as string]: theme?.error ?? DEFAULTS.error,
+    // Optional: left unset they inherit from the host's CSS, or fall back to the built-in look.
+    ...(theme?.border !== undefined ? { ['--tracery-border' as string]: theme.border } : {}),
+    ...(theme?.canvasBg !== undefined ? { ['--tracery-canvas-bg' as string]: theme.canvasBg } : {}),
+    ...(theme?.panelBg !== undefined ? { ['--tracery-panel-bg' as string]: theme.panelBg } : {}),
     display: 'flex',
     flexDirection: 'column',
     width: '100%',
@@ -67,7 +79,7 @@ export const styles = {
     alignItems: 'center',
     gap: 12,
     padding: '8px 12px',
-    borderBottom: `1px solid ${DEFAULTS.border}`,
+    borderBottom: `1px solid ${border}`,
     flex: '0 0 auto',
   } satisfies CSSProperties,
   statusDot: (status: string): CSSProperties => ({
@@ -87,7 +99,7 @@ export const styles = {
   scopeButton: (active: boolean): CSSProperties => ({
     padding: '4px 10px',
     borderRadius: 6,
-    border: `1px solid ${active ? v('accent', DEFAULTS.accent) : DEFAULTS.border}`,
+    border: `1px solid ${active ? v('accent', DEFAULTS.accent) : border}`,
     background: active ? v('accent', DEFAULTS.accent) : 'transparent',
     color: active ? DEFAULTS.bg : v('fg', DEFAULTS.fg),
     cursor: 'pointer',
@@ -97,7 +109,7 @@ export const styles = {
   sidebar: {
     width: 220,
     flex: '0 0 auto',
-    borderRight: `1px solid ${DEFAULTS.border}`,
+    borderRight: `1px solid ${border}`,
     overflowY: 'auto',
     padding: 8,
   } satisfies CSSProperties,
@@ -127,14 +139,50 @@ export const styles = {
   // bottom edge and overlap whatever a host page renders below the explorer
   // (its own footer, e.g. `apps/hub/web/src/Footer.tsx`).
   graphArea: { flex: '1 1 auto', minWidth: 0, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' } satisfies CSSProperties,
-  graphCanvas: { flex: '1 1 auto', minHeight: 0, position: 'relative' } satisfies CSSProperties,
+  graphCanvas: {
+    flex: '1 1 auto',
+    minHeight: 0,
+    position: 'relative',
+    overflow: 'hidden',
+    background: v('canvas-bg', 'transparent'),
+  } satisfies CSSProperties,
+  graphToolbar: { position: 'absolute', top: 8, right: 8, display: 'flex', gap: 4, zIndex: 1 } satisfies CSSProperties,
+  toolbarButton: {
+    padding: '3px 10px',
+    borderRadius: 6,
+    border: `1px solid ${border}`,
+    background: v('panel-bg', DEFAULTS.panel),
+    color: v('fg', DEFAULTS.fg),
+    cursor: 'pointer',
+    fontSize: 12,
+  } satisfies CSSProperties,
+  nodeListToggle: {
+    display: 'block',
+    width: '100%',
+    textAlign: 'left',
+    padding: '6px 0',
+    border: 'none',
+    background: 'transparent',
+    color: v('muted', DEFAULTS.muted),
+    cursor: 'pointer',
+    fontSize: 12,
+  } satisfies CSSProperties,
   // Capped and internally scrollable so a long node list shrinks the canvas
   // rather than spilling out of `graphArea`'s bottom edge.
-  nodeList: { flex: '0 1 auto', minHeight: 0, maxHeight: '45%', overflowY: 'auto', padding: '0 12px 8px' } satisfies CSSProperties,
+  nodeList: {
+    flex: '0 1 auto',
+    minHeight: 0,
+    maxHeight: '45%',
+    overflowY: 'auto',
+    padding: '0 12px 8px',
+    // A visible edge, so the canvas above ends somewhere the eye can see.
+    borderTop: `1px solid ${border}`,
+    background: v('panel-bg', 'transparent'),
+  } satisfies CSSProperties,
   inspector: {
     width: 320,
     flex: '0 0 auto',
-    borderLeft: `1px solid ${DEFAULTS.border}`,
+    borderLeft: `1px solid ${border}`,
     overflowY: 'auto',
     padding: 12,
   } satisfies CSSProperties,
@@ -143,7 +191,7 @@ export const styles = {
     flexWrap: 'wrap',
     gap: 8,
     padding: '6px 12px',
-    borderBottom: `1px solid ${DEFAULTS.border}`,
+    borderBottom: `1px solid ${border}`,
     flex: '0 0 auto',
   } satisfies CSSProperties,
   legendItem: (dimmed: boolean): CSSProperties => ({
@@ -152,7 +200,7 @@ export const styles = {
     gap: 6,
     padding: '2px 8px',
     borderRadius: 999,
-    border: `1px solid ${DEFAULTS.border}`,
+    border: `1px solid ${border}`,
     opacity: dimmed ? 0.5 : 1,
     fontSize: 11,
     cursor: 'pointer',
@@ -185,7 +233,7 @@ export const styles = {
     fontSize: 10,
     padding: '1px 6px',
     borderRadius: 999,
-    border: `1px solid ${DEFAULTS.border}`,
+    border: `1px solid ${border}`,
     marginRight: 4,
     color: v('muted', DEFAULTS.muted),
   } satisfies CSSProperties,

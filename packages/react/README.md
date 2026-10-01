@@ -80,8 +80,34 @@ interface ActivityExplorerProps {
   className?: string;
   style?: CSSProperties;
   ariaLabel?: string;
+  // Added in 0.1.2, all optional:
+  nodeDetail?: (node: NodeRecord, flow: Flow) => string | undefined;  // the line under a card's title
+  nodeFooter?: (node: NodeRecord, flow: Flow) => string | undefined;  // a card's footer line
+  showNodeList?: boolean;                 // default true
+  nodeListCollapsible?: boolean;          // default false: adds a "Nodes (N)" toggle
+  nodeListInitiallyCollapsed?: boolean;   // with nodeListCollapsible, start collapsed
+  reducedMotion?: boolean;                // forwarded to the graph; default: the user's OS setting
 }
 ```
+
+New in 0.1.2:
+
+- `nodeDetail` / `nodeFooter` replace a card's detail (default: its latest op
+  name) and footer (default: "N ops" or "N errors"). Return `undefined` to keep
+  the default for that node. Pass memoised functions: a new function every
+  render recomputes every card's text every render. The footer is drawn only
+  on cards at least 74 px tall, so set `height` in `catalog` (`NodePresentation`).
+- `showNodeList={false}` drops the accessible node list under the graph;
+  `nodeListCollapsible` adds a header that collapses it (`data-testid="node-list-toggle"`).
+  A collapsed list renders no rows, which also saves work on large graphs.
+- A **Fit** button (`data-testid="fit-view"`) in the graph toolbar frames the whole
+  graph. Fit padding now covers half a card, so edge cards are no longer cut off.
+- Theme variables, each also a `theme` field: `--tracery-border` (`border`, every
+  panel and divider line, including the inspector and the node list's new top edge),
+  `--tracery-canvas-bg` (`canvasBg`, the graph canvas; default transparent) and
+  `--tracery-panel-bg` (`panelBg`, the node list; default transparent). Left unset
+  they inherit from your CSS or fall back to the built-in look.
+- Dragging a node and live updates are much cheaper (see the visualizer README).
 
 - **Connection status** is a dot + label (`connecting` / `live` /
   `reconnecting` / `polling` / `offline`), `data-testid="connection-status"`.

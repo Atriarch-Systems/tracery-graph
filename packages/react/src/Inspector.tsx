@@ -4,6 +4,7 @@
  * (pretty JSON, collapsible) and the annotate timeline"). Overridable via
  * `ActivityExplorer`'s `renderInspector` prop.
  */
+import { memo, useMemo } from 'react';
 import type { ActivityNode, NodeData, OpRecord, TimelineEntry } from '@atriarch-systems/tracery-core';
 import { styles } from './style.js';
 import { isRedactedContext } from './redacted.js';
@@ -30,8 +31,24 @@ function annotations(timeline: readonly TimelineEntry[]): TimelineEntry[] {
   return timeline.filter((entry) => entry.type === 'annotate');
 }
 
-function OpCard({ op }: { op: OpRecord }) {
+/** Pretty JSON, computed once per value instead of on every render of the panel. */
+function usePretty(value: unknown): string {
+  return useMemo(() => JSON.stringify(value, null, 2), [value]);
+}
+
+function AnnotationNote({ entry }: { entry: TimelineEntry }) {
+  const pretty = usePretty(entry.context);
+  return (
+    <div style={{ marginTop: 4 }}>
+      <div style={styles.muted}>{formatTs(entry.ts)}</div>
+      {entry.context && <pre style={styles.pre}>{pretty}</pre>}
+    </div>
+  );
+}
+
+const OpCard = memo(function OpCard({ op }: { op: OpRecord }) {
   const notes = annotations(op.timeline);
+  const context = usePretty(op.context);
   return (
     <div style={styles.opRow(op.status)} data-testid="inspector-op" data-op-id={op.id} data-op-status={op.status}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
@@ -63,23 +80,20 @@ function OpCard({ op }: { op: OpRecord }) {
       {Object.keys(op.context).length > 0 && !isRedactedContext(op.context) && (
         <details data-testid="inspector-op-context" open>
           <summary>Context</summary>
-          <pre style={styles.pre}>{JSON.stringify(op.context, null, 2)}</pre>
+          <pre style={styles.pre}>{context}</pre>
         </details>
       )}
       {notes.length > 0 && (
         <details data-testid="inspector-op-timeline" open>
           <summary>Timeline ({notes.length})</summary>
           {notes.map((entry) => (
-            <div key={entry.eventId} style={{ marginTop: 4 }}>
-              <div style={styles.muted}>{formatTs(entry.ts)}</div>
-              {entry.context && <pre style={styles.pre}>{JSON.stringify(entry.context, null, 2)}</pre>}
-            </div>
+            <AnnotationNote key={entry.eventId} entry={entry} />
           ))}
         </details>
       )}
     </div>
   );
-}
+});
 
 export function Inspector({ selection }: { readonly selection: InspectorSelection | null }) {
   if (!selection) {
@@ -91,14 +105,24 @@ export function Inspector({ selection }: { readonly selection: InspectorSelectio
   }
   const node = selection.data?.node;
   const ops = selection.data?.ops ?? [];
+  return <InspectorBody label={selection.label} status={selection.status} node={node} ops={ops} />;
+}
+
+function InspectorBody({ label, status, node, ops }: {
+  readonly label: string;
+  readonly status: InspectorSelection['status'];
+  readonly node: NodeData['node'] | undefined;
+  readonly ops: readonly OpRecord[];
+}) {
+  const newestFirst = useMemo(() => opsNewestFirst(ops), [ops]);
   return (
     <div data-testid="inspector">
-      <h3 style={{ margin: '0 0 4px' }}>{selection.label}</h3>
+      <h3 style={{ margin: '0 0 4px' }}>{label}</h3>
       <div style={styles.muted}>
-        {node?.kind ?? 'node'} · {node?.status ?? selection.status} · {ops.length} ops
+        {node?.kind ?? 'node'} · {node?.status ?? status} · {ops.length} ops
       </div>
       <div style={{ marginTop: 12 }}>
-        {opsNewestFirst(ops).map((op) => (
+        {newestFirst.map((op) => (
           <OpCard key={op.id} op={op} />
         ))}
         {ops.length === 0 && <div style={styles.muted}>No ops recorded.</div>}
