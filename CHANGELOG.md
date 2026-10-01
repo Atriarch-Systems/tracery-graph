@@ -4,8 +4,10 @@
 
 ## v0.1.2
 
-Explorer drag performance, visible bounds and node detail props. Core, client, React and hub 0.1.2;
-visualizer 0.3.2.
+Explorer drag performance, visible bounds and node detail props, plus the hardened hub image.
+Core, client, React and hub 0.1.2; visualizer 0.3.2.
+
+### Explorer
 
 - Fixed the lag after dragging a node in the explorer. A dropped card can be grabbed at its new place
   immediately (the pointer canvas is refreshed on drop, settle and zoom instead of every 800 ms); a drop
@@ -20,9 +22,12 @@ visualizer 0.3.2.
   button in the graph toolbar.
 - The node list under the graph has a visible top border, and every panel line follows
   `--tracery-border`.
-- `fitView` pads by half a card so edge cards are no longer cut off.
+- `fitView` (and the Fit button) frames the cards' full extents and solves the zoom directly, so edge
+  cards stay inside the canvas at any zoom and viewport width.
 - Visualizer: `HullCache`, `hitTestShape`, `sameStructure`, and a `shadows` argument on `drawNode`/`drawLink`.
   `groupAlpha` also takes a set of dimmed group ids.
+
+### Hub image and deployment
 
 - The hub image is now shell-less: a FROM scratch runtime with the Node binary
   and six pinned Alpine packages (musl, libgcc, libstdc++, ca-certificates-bundle,
