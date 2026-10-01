@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+## v0.1.3
+
+Supply-chain hardening: a smaller hub dependency tree, an opt-in OpenAPI document and npm provenance.
+Core, client, React and hub 0.1.3; visualizer stays 0.3.2.
+
+### Hub
+
+- **OpenAPI is pre-generated and off by default.** The hub no longer builds its OpenAPI document at
+  runtime. It is generated at build time from the real route schemas (`npm run openapi`, using
+  `@fastify/swagger` as a devDependency), committed as `apps/hub/openapi.json`, and shipped in the
+  package and the Docker image. `GET /v1/openapi.json` is served only when `TRACERY_OPENAPI=1`;
+  otherwise it is a 404. Behaviour when enabled is unchanged (same document, no authentication).
+  A test fails if the committed document drifts from the routes. **Upgrade note:** set
+  `TRACERY_OPENAPI=1` if you or your tooling fetch `/v1/openapi.json`; the "UI not built" page no longer
+  links to it.
+- `@fastify/swagger` is no longer a runtime dependency: six fewer packages in the hub's production tree
+  (104 to 98 third-party packages: `@fastify/swagger`, `json-schema-resolver`, `openapi-types`, `yaml`,
+  `debug`, `ms`). It was also the source of an "unstable ownership" supply-chain alert.
+- `safe-buffer` (a socket.dev "optimized override" alert) stays: it is reached only through
+  `@fastify/websocket` > `duplexify` > `readable-stream@3` > `string_decoder`, and the latest releases of all
+  of those still depend on it. See docs/HARDENING.md "Supply chain (v0.1.3)" for why an npm override does
+  not help consumers and what you can do.
+- `TRACERY_OPENAPI` is documented in the hub README and the root README environment tables.
+
+### Releases
+
+- **npm provenance.** The npm packages are now published with `npm publish --provenance` from a new
+  GitHub-hosted `publish-npm` job (`contents: read`, `id-token: write`), so each release carries a signed
+  attestation linking the tarball to the workflow run and commit. Everything else, including the Docker
+  Hub and GitHub release publishing, stays on the self-hosted runners. The jobs run in order (`preflight`
+  creates the tag and draft release, `publish-npm`, then `publish`), so the GitHub release is still undrafted
+  only after npm and Docker Hub are both published. `scripts/release-npm.mjs` re-verifies the checksums,
+  keeps its "already published with matching integrity" skip (the unchanged visualizer 0.3.2 is skipped
+  this way), and now requires the registry to show the attestation for what it publishes; it has tests.
+- The job works with the existing `NPMJS_TOKEN` secret and is ready for npm Trusted Publishing (no token):
+  docs/PUBLISHING.md lists the exact Trusted Publisher settings to enter for each package.
+- `publish:check` also verifies that the hub tarball ships `openapi.json`, does not serve it by default and
+  has no `@fastify/swagger` runtime dependency.
+
 ## v0.1.2
 
 Explorer drag performance, visible bounds and node detail props, plus the hardened hub image.
