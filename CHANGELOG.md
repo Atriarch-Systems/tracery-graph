@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## v0.1.2
+
+Explorer drag performance, visible bounds and node detail props, plus the hardened hub image.
+Core, client, React and hub 0.1.2; visualizer 0.3.2.
+
+### Explorer
+
+- Fixed the lag after dragging a node in the explorer. A dropped card can be grabbed at its new place
+  immediately (the pointer canvas is refreshed on drop, settle and zoom instead of every 800 ms); a drop
+  no longer replays a paused simulation or reheats the layout; canvas callbacks keep stable identities
+  (a new one made force-graph repaint synchronously on every render); the canvas repaints only while
+  something animates or moves; group hulls are cached; the glow is skipped on graphs over 150 nodes or
+  with reduced motion; live updates keep the graph and card positions and only repaint unless a node or
+  edge was added or removed; node lookups use maps, and the inspector memoises its JSON.
+- New explorer props, all optional: `nodeDetail`, `nodeFooter`, `showNodeList`, `nodeListCollapsible`,
+  `nodeListInitiallyCollapsed` and `reducedMotion`; theme variables `--tracery-border`,
+  `--tracery-canvas-bg` and `--tracery-panel-bg` (theme fields `border`, `canvasBg`, `panelBg`); a Fit
+  button in the graph toolbar.
+- The node list under the graph has a visible top border, and every panel line follows
+  `--tracery-border`.
+- `fitView` (and the Fit button) frames the cards' full extents and solves the zoom directly, so edge
+  cards stay inside the canvas at any zoom and viewport width.
+- Visualizer: `HullCache`, `hitTestShape`, `sameStructure`, and a `shadows` argument on `drawNode`/`drawLink`.
+  `groupAlpha` also takes a set of dimmed group ids.
+
+### Hub image and deployment
+
 - The hub image is now shell-less: a FROM scratch runtime with the Node binary
   and six pinned Alpine packages (musl, libgcc, libstdc++, ca-certificates-bundle,
   alpine-release, alpine-keys). No shell, busybox, apk, wget, nc or su. It keeps

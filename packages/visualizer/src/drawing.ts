@@ -9,7 +9,8 @@ const blend = (gray: string, green: string, amount: number) => {
   const channels = [1, 3, 5].map(i => Math.round(parseInt(gray.slice(i, i + 2), 16) * (1 - amount) + parseInt(green.slice(i, i + 2), 16) * amount));
   return `rgb(${channels.join(',')})`;
 };
-export const drawNode = (node: RuntimeNode, ctx: CanvasRenderingContext2D, selected: string | null, reducedMotion: boolean, groupAlpha = 1, theme: GraphTheme = DEFAULT_GRAPH_THEME) => {
+/** `shadows: false` skips the glow (canvas `shadowBlur` is CPU-expensive); `ActivityGraph` turns it off on large graphs. */
+export const drawNode = (node: RuntimeNode, ctx: CanvasRenderingContext2D, selected: string | null, reducedMotion: boolean, groupAlpha = 1, theme: GraphTheme = DEFAULT_GRAPH_THEME, shadows = true) => {
     const now = Date.now(), amount = intensity(node.spec.activity, now), current = amount > 0;
     const active = isNodeActive(node.spec, now);
     const breath = active && !reducedMotion ? (1 + Math.sin(now * Math.PI * 2 / 1800)) / 2 : 0;
@@ -18,7 +19,7 @@ export const drawNode = (node: RuntimeNode, ctx: CanvasRenderingContext2D, selec
     const color = error ? blend(theme.errorDim, theme.errorBright, amount) : blend(theme.nodeAccentIdle, accent(node.spec.presentation?.accent, theme.nodeAccentFallback), amount);
     const { w, h } = box(node), x = node.x - w / 2, y = node.y - h / 2;
     ctx.save(); ctx.globalAlpha = opacity(node.spec.activity, now) * groupAlpha;
-    if (current && !reducedMotion) {
+    if (current && !reducedMotion && shadows) {
       ctx.shadowColor = active ? hot + 'aa' : hot + '35';
       ctx.shadowBlur = active ? 10 + 18 * breath : 8;
     }
@@ -44,7 +45,7 @@ export const drawNode = (node: RuntimeNode, ctx: CanvasRenderingContext2D, selec
     ctx.restore();
   };
 
-export const drawLink = (link: RuntimeEdge, ctx: CanvasRenderingContext2D, selected: string | null, reducedMotion: boolean, theme: GraphTheme = DEFAULT_GRAPH_THEME) => {
+export const drawLink = (link: RuntimeEdge, ctx: CanvasRenderingContext2D, selected: string | null, reducedMotion: boolean, theme: GraphTheme = DEFAULT_GRAPH_THEME, shadows = true) => {
     if (typeof link.source === 'string' || typeof link.target === 'string') return;
     const a = link.source, b = link.target, now = Date.now();
     const kind = link.spec.kind ?? 'call';
@@ -83,7 +84,7 @@ export const drawLink = (link: RuntimeEdge, ctx: CanvasRenderingContext2D, selec
     ctx.lineTo(end.x - arrow * Math.cos(angle + .45), end.y - arrow * Math.sin(angle + .45)); ctx.closePath(); ctx.fill();
     const t = (now - (link.spec.activity?.updatedAt ?? 0)) / 850;
     if (current && t >= 0 && t <= 1 && !reducedMotion) {
-      const p = point(t); ctx.fillStyle = theme.travelingDot; ctx.shadowColor = theme.travelingDotGlow; ctx.shadowBlur = 10;
+      const p = point(t); ctx.fillStyle = theme.travelingDot; if (shadows) { ctx.shadowColor = theme.travelingDotGlow; ctx.shadowBlur = 10; }
       ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
     }
     if ((link.spec.count ?? 1) > 1 || link.spec.showLabel || selected === a.id || selected === b.id) {

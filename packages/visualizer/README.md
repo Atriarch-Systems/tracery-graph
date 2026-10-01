@@ -59,6 +59,24 @@ Install the resulting tarball into a consumer with `npm install ./vendor/atriarc
 
 Tests cover frozen consumer input, stable layout across updates, engine array isolation, anchors, edge-first streams, separate directed relationships, removed nodes, duplicate IDs, lifecycle transitions, group hulls (small-group bounding rect vs. convex hull, dimmed alpha, empty groups), group hull hit-testing (`hitTestGroup` against the same padded-rect/convex-hull geometry `drawGroupHull` draws, including the concave-gap and boundary cases, and a regression test pinning both to the one shared `groupHullShape` function), dashed `data` edges vs. thicker `spawn` edges, `placeBranches` ignoring `data` edges as a parent, the pure double-click/activate window helper, and the `GraphTheme` contract (every semantic color slot, no-theme-vs-`DEFAULT_GRAPH_THEME` equivalence, and a node/group's own `accent` still beating the theme's fallback). Draggable-group interaction (capture-phase interception, live drag, click-vs-drag threshold, the individual-drag/group-drag coexistence) is covered end-to-end by `apps/hub/web`'s Playwright suite, since it needs a live pointer/DOM, not this package's Node-based tests.
 
+## Performance notes (0.3.2)
+
+- The hit (pointer) canvas is refreshed straight after a drop, a settle and a
+  pan or zoom, so a card dropped somewhere can be grabbed there at once
+  (force-graph otherwise repaints it at most every 800 ms).
+- The canvas repaints every frame only while something pulses, fades or moves
+  (`autoPauseRedraw`); a still graph costs no frames and its frame loop pauses
+  once the layout engine has stopped. The loop is never paused mid-cooldown.
+- In `layoutMode="guided"` a drop pins the card and repaints; it does not
+  restart the force simulation (`cooldownTicks` is 1, the collision force is off).
+- A data-only update (labels, status, activity) keeps the existing graph and
+  repaints; only an added or removed node or edge hands the renderer a new
+  graph. Existing cards never move.
+- Canvas callbacks keep stable identities, group hulls are cached per layout
+  version, and the glow (`shadowBlur`) is not drawn when `reducedMotion` is set or the
+  graph has more than 150 nodes.
+- `fitView` pads by half a card plus a margin (capped at a quarter of the canvas).
+
 ## Canvas theming
 
 Every canvas color -- node fills/borders/text, edge lines/arrows/labels, the
