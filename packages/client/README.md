@@ -132,4 +132,4 @@ hub's JSON response bodies, not the in-process reducer output. The hub
 itself (`apps/hub`) has not shipped yet, so treat the exact response
 envelopes -- `ListFlowsResult` in particular -- as a best-effort reading of
 `docs/SPEC.md` §6 rather than a confirmed schema until the hub publishes
-its OpenAPI document.
+its OpenAPI document (`openapi.json` in the hub package).

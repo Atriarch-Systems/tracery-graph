@@ -2,7 +2,7 @@
 // 'none' treats every request as a full-access principal on the single
 // "default" workspace, with no key ever checked. Covers every HTTP route,
 // the single-workspace rejection, GET /v1/info in both auth modes and both
-// editions, and that /v1/info is documented in the OpenAPI doc.
+// editions.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ACTIVITY_CONTRACT_VERSION } from '@atriarch-systems/tracery-core/contract';
@@ -176,17 +176,5 @@ test('GET /v1/info: edition reflects extensions.isLicensed(), in both auth modes
     assert.equal(body.auth, 'keys');
   } finally {
     await licensedKeys.close();
-  }
-});
-
-test('openapi: /v1/info is documented', async () => {
-  const created = await createLocalServer();
-  try {
-    const res = await created.app.inject({ method: 'GET', url: '/v1/openapi.json' });
-    assert.equal(res.statusCode, 200);
-    const doc = JSON.parse(res.body);
-    assert.ok(Object.keys(doc.paths).includes('/v1/info'), `openapi document missing /v1/info; had ${Object.keys(doc.paths).join(', ')}`);
-  } finally {
-    await created.close();
   }
 });

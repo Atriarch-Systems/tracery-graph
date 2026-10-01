@@ -135,6 +135,7 @@ COPY --from=build /repo/apps/hub/web/dist/THIRD-PARTY-NOTICES.txt ./THIRD-PARTY-
 COPY --from=build /repo/packages/core/package.json ./packages/core/package.json
 COPY --from=build /repo/packages/core/dist ./packages/core/dist
 COPY --from=build /repo/apps/hub/package.json ./apps/hub/package.json
+COPY --from=build /repo/apps/hub/openapi.json ./apps/hub/openapi.json
 COPY --from=build /repo/apps/hub/dist ./apps/hub/dist
 COPY --from=build /repo/apps/hub/bin ./apps/hub/bin
 COPY --from=build /repo/apps/hub/web/dist ./apps/hub/web/dist

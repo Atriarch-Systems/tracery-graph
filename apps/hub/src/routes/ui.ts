@@ -19,8 +19,7 @@ function placeholderHtml(): string {
 <p>The hosted UI is not built. Build <code>apps/hub/web</code> and set
 <code>TRACERY_UI_DIR</code> (or leave it at the default <code>web/dist</code>)
 to serve it here.</p>
-<p>In the meantime: <a href="/v1/openapi.json">/v1/openapi.json</a>,
-<a href="/healthz">/healthz</a>.</p>
+<p>In the meantime: <a href="/healthz">/healthz</a>.</p>
 </body></html>`;
 }
 

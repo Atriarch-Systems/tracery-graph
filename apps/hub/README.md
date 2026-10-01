@@ -30,6 +30,7 @@ other setting below has a default.
 | `TRACERY_MAX_EVENTS_PER_WORKSPACE` | `500000` | Soft per-workspace cap enforced by the sweeper (not a hard per-append limit). |
 | `TRACERY_METRICS_TOKEN` | unset | When set, `GET /metrics` requires it (`?token=`, `x-metrics-token`, or `Authorization: Bearer`). Unset means `/metrics` is public. |
 | `TRACERY_LOG_LEVEL` | `info` | Pino log level (`fatal`..`trace`, or `silent`). |
+| `TRACERY_OPENAPI` | unset (off) | `1` (or `true`) serves the OpenAPI 3.1 document at `GET /v1/openapi.json`, with no authentication. Off by default: the document describes every route, so expose it only where you want that. The document is generated at build time and ships in the package as `openapi.json`; the hub never builds it at runtime. `0`, `false` or empty keep it off; any other value stops the hub at boot. |
 | `TRACERY_UI_DIR` | `<package>/web/dist` | Directory to serve at `/ui`. When it (or its `index.html`) is missing, `/ui` serves a plain "not built" page instead. |
 | `TRACERY_PUBLIC_URL` | unset | Absolute origin (scheme + host) used to build a share link's `url` and its `GET /s/:token` Open Graph tags (`docs/SHARING.md`). Unset means "use the inbound request's own origin" -- set this explicitly whenever the hub is reachable at a different public hostname than requests arrive on (behind a CDN, a path-rewriting gateway, etc.). |
 
@@ -106,8 +107,9 @@ offers.
 
 ## HTTP API
 
-All JSON, all under `/v1` except health/metrics/UI. Full machine-readable
-spec at `GET /v1/openapi.json` (OpenAPI 3.1). Errors are always
+All JSON, all under `/v1` except health/metrics/UI. The machine-readable
+spec (OpenAPI 3.1) ships pre-generated as `openapi.json` in the package and is
+served at `GET /v1/openapi.json` only when `TRACERY_OPENAPI=1`. Errors are always
 `{ "error": { "code": "...", "message": "..." } }`; every response carries
 `x-request-id`.
 
