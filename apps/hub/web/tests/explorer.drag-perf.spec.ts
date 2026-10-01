@@ -129,8 +129,8 @@ test('a node can be dragged five times in a row, each grab at its new position, 
   await expect(canvas).toBeVisible();
   await expect.poll(async () => (await findCards(page)).length, { timeout: 10_000 }).toBeGreaterThan(0);
   await page.waitForTimeout(1500); // initial fit + cooldown
-  const mid = { x: 237 + 818 / 2, y: 85 + 684 / 2 };
-  await page.mouse.move(mid.x, mid.y);
+  const wheelBox = (await canvas.boundingBox())!;
+  await page.mouse.move(wheelBox.x + wheelBox.width / 2, wheelBox.y + wheelBox.height / 2);
   for (let k = 0; k < 2; k++) { await page.mouse.wheel(0, 300); await page.waitForTimeout(80); }
   await page.waitForTimeout(600);
 
@@ -242,11 +242,10 @@ test('dragging nodes of a large live graph stays responsive while events stream 
   const blocked = Math.round(longTasks.reduce((a, b) => a + b, 0));
   const worst = Math.round(Math.max(0, ...longTasks));
   console.log(`drag on ${BIG_NODES} nodes at ${CPU_RATE}x CPU: ${longTasks.length} long tasks, ${blocked} ms blocked, worst ${worst} ms`);
-  await page.screenshot({ path: '../../../out/r1-u11/big.png' });
   expect(worst, `no single long task over 200 ms (tasks: ${longTasks.map(Math.round).join(', ')})`).toBeLessThan(200);
   // Drawing hundreds of glowing cards and repainting the hit canvas on every render kept the main thread
-  // busy for seconds here (8 s or more before the fix, 1 to 4 s after); the budget sits well between.
-  expect(blocked, 'main-thread time spent in long tasks during the drags').toBeLessThan(6000);
+  // busy for seconds here (6 s or more before the fix, about 1.5 s after); the budget sits between.
+  expect(blocked, 'main-thread time spent in long tasks during the drags').toBeLessThan(3000);
 });
 
 // --- bounds -------------------------------------------------------------------------------------
@@ -270,7 +269,6 @@ test('the node list has a visible top edge and the Fit button frames every card 
   for (let k = 0; k < 6; k++) { await page.mouse.wheel(0, -400); await page.waitForTimeout(60); }
   await page.getByTestId('fit-view').click();
   await page.waitForTimeout(900);
-  await page.screenshot({ path: '../../../out/r1-u11/fit.png' });
 
   const cards = await findCards(page);
   expect(cards.length).toBeGreaterThan(2);
@@ -281,3 +279,33 @@ test('the node list has a visible top edge and the Fit button frames every card 
     expect(card.cy + card.h / 2, 'card bottom edge inside the canvas').toBeLessThan(box.y + box.height);
   }
 });
+
+// Short chains zoom in far past 1, where a padding sized in graph units hides the outer cards.
+for (const width of [1280, 2560]) for (const count of [2, 3, 6]) {
+  test(`Fit keeps every card of a ${count}-node chain inside the canvas at ${width}px wide`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const events: Record<string, unknown>[] = [];
+    let cursor = 0;
+    const push = (e: Record<string, unknown>) => events.push({ v: 1, ...e, workspace: 'default', cursor: ++cursor, receivedAt: e.ts });
+    for (let i = 0; i < count; i++) {
+      const parent = i === 0 ? {} : { parentOp: `op:${i - 1}`, parentNode: `node:${i - 1}` };
+      push({ id: `c-${i}-s`, ts: T0 + i * 100, flow: 'flow:chain', op: `op:${i}`, node: `node:${i}`, type: 'start', name: 'tool.step', kind: 'tool', label: `Step ${i}`, root: i === 0, actor, ...parent });
+      push({ id: `c-${i}-e`, ts: T0 + i * 100 + 50, flow: 'flow:chain', op: `op:${i}`, node: `node:${i}`, type: 'end', name: 'tool.step', status: 'success', durationMs: 50 });
+    }
+    await prime(page, { type: 'snapshot', cursor: events.length, events, truncated: false });
+    await expect(page.getByTestId('flow-picker-item').first()).toBeVisible();
+    const canvas = page.locator('canvas').first();
+    await expect.poll(async () => (await findCards(page)).length, { timeout: 10_000 }).toBeGreaterThan(0);
+    await page.getByTestId('fit-view').click();
+    await page.waitForTimeout(1200);
+    const box = (await canvas.boundingBox())!;
+    const cards = await findCards(page);
+    expect(cards.length).toBe(count);
+    for (const card of cards) {
+      expect(card.cx - card.w / 2, 'card left edge inside the canvas').toBeGreaterThan(box.x + 4);
+      expect(card.cx + card.w / 2, 'card right edge inside the canvas').toBeLessThan(box.x + box.width - 4);
+      expect(card.cy - card.h / 2, 'card top edge inside the canvas').toBeGreaterThan(box.y + 4);
+      expect(card.cy + card.h / 2, 'card bottom edge inside the canvas').toBeLessThan(box.y + box.height - 4);
+    }
+  });
+}

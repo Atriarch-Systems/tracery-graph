@@ -314,7 +314,7 @@ export function ActivityExplorer(props: ActivityExplorerProps) {
     setSelectedNodeId(null);
   };
 
-  const activate = (node: ActivityNode<NodeData>): void => {
+  const activate = useCallback((node: ActivityNode<NodeData>): void => {
     if (!activeFlow) return;
     const target = activatedFlow(node, activeFlow);
     if (target) {

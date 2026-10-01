@@ -69,6 +69,7 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
   const layoutVersion = useRef(0);
   const hulls = useRef(new HullCache());
   const engineRunning = useRef(false);
+  const pointerDragging = useRef(false);
   const hitPending = useRef(false);
   const zoomTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [graph, setGraph] = useState<RuntimeGraph>(emptyGraph);
@@ -200,13 +201,22 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
     const force = api.current;
     if (!force) return;
     wake();
-    // zoomToFit frames node centres only, so the padding has to cover half a card plus a margin or the
-    // outer cards are cut by the canvas edge; it is capped so a small canvas still leaves room to draw.
-    let half = 0;
-    for (const n of runtime.current.nodes) { const { w, h } = box(n); half = Math.max(half, w / 2, h / 2); }
-    const available = Math.min(host.current?.clientWidth || size.width, host.current?.clientHeight || size.height);
-    const padding = Math.max(8, Math.min(Math.max(85, half + 16), available / 4));
-    force.zoomToFit(durationMs, padding);
+    // zoomToFit pads in screen pixels around node centres only, so a card (sized in graph units) can slide
+    // out of view once the zoom passes 1. Frame the card extents instead and solve for the zoom directly.
+    const list = runtime.current.nodes;
+    if (list.length === 0) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of list) {
+      const { w, h } = box(n);
+      const nx = n.x ?? n.homeX, ny = n.y ?? n.homeY;
+      minX = Math.min(minX, nx - w / 2); maxX = Math.max(maxX, nx + w / 2);
+      minY = Math.min(minY, ny - h / 2); maxY = Math.max(maxY, ny + h / 2);
+    }
+    const canvasW = host.current?.clientWidth || size.width, canvasH = host.current?.clientHeight || size.height;
+    const margin = Math.max(8, Math.min(32, Math.min(canvasW, canvasH) / 8));
+    const k = Math.min((canvasW - 2 * margin) / Math.max(1, maxX - minX), (canvasH - 2 * margin) / Math.max(1, maxY - minY));
+    force.centerAt((minX + maxX) / 2, (minY + maxY) / 2, durationMs);
+    force.zoom(Math.max(0.01, Math.min(4, k)), durationMs);
     refreshHitArea();
   };
   const toImage = async (options?: CaptureOptions): Promise<Blob> => {
@@ -268,7 +278,7 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
   }, [select]);
   const handleBackgroundClick = useCallback(() => select(null), [select]);
 
-  const handleNodeDrag = useCallback(() => { layoutVersion.current++; }, []);
+  const handleNodeDrag = useCallback(() => { pointerDragging.current = true; layoutVersion.current++; }, []);
   const handleNodeDragEnd = useCallback((n: RuntimeNode) => {
     const anchored = n.spec.position?.anchored;
     if (anchored) { n.fx = n.homeX; n.fy = n.homeY; }
@@ -277,6 +287,8 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
     layoutVersion.current++;
     latest.current.onNodeMove?.(n.spec as ActivityNode<N>, { x: anchored ? n.homeX : n.x, y: anchored ? n.homeY : n.y });
     // The card moved: the next grab, a moment later, must find it where it now is.
+    pointerDragging.current = false;
+    setEngineStops(c => c + 1);
     refreshHitArea();
   }, [refreshHitArea]);
   const handleEngineTick = useCallback(() => { engineRunning.current = true; layoutVersion.current++; }, []);
@@ -286,6 +298,8 @@ export function ActivityGraph<N = unknown, E = unknown>(props: ActivityGraphProp
     }
     engineRunning.current = false;
     layoutVersion.current++;
+    // While a card is dragged the engine stops every other frame; the drop does one refresh instead.
+    if (pointerDragging.current) return;
     setEngineStops(c => c + 1);
     refreshHitArea();
   }, [refreshHitArea]);
