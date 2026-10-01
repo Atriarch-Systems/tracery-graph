@@ -170,9 +170,113 @@ jobs:
         if: always()
         run: docker image rm "$LOCAL_IMAGE" "$LOCAL_SOURCES_IMAGE" || true
 
-  publish:
+  # Publication is three jobs run in order, so each credential is only present
+  # where it is used and the GitHub release is only undrafted after everything
+  # (npm and Docker Hub) is published:
+  #   preflight    verify every artifact and credential, then create the tag and draft release
+  #   publish-npm  npm tarballs with provenance (GitHub-hosted: npm signs provenance and
+  #                supports Trusted Publishing only there)
+  #   publish      Docker Hub images, then undraft the GitHub release with its evidence
+  preflight:
     if: needs.prepare.outputs.publish == 'true'
     needs: [prepare, validate, containers]
+    runs-on: [self-hosted, Linux, X64, arc-amd64]
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: '22.23.2' }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-candidate-*
+          merge-multiple: true
+          path: artifacts
+      - name: Verify all artifacts and required publication settings
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKER_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$DOCKER_USERNAME" || { echo 'Missing DOCKERHUB_USERNAME'; exit 1; }
+          test -n "$DOCKER_TOKEN" || { echo 'Missing DOCKERHUB_TOKEN'; exit 1; }
+          [[ "$DOCKERHUB_IMAGE" =~ ^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9._-]*$ ]] || { echo 'Set DOCKERHUB_IMAGE to namespace/repository'; exit 1; }
+          (cd artifacts && sha256sum -c reports/npm-SHA256SUMS)
+          test "$(cat artifacts/reports/source-commit.txt)" = "$GITHUB_SHA"
+          for arch in amd64 arm64; do
+            (cd artifacts && sha256sum -c "container/$arch/SHA256SUMS")
+            test "$(cat "artifacts/container/$arch/source-commit.txt")" = "$GITHUB_SHA"
+            # The image's SOURCES.txt must name the places the publish job publishes the sources.
+            grep -qF "$DOCKERHUB_IMAGE:$RELEASE_VERSION-sources" "artifacts/container/$arch/SOURCES.txt" || { echo "SOURCES.txt does not name $DOCKERHUB_IMAGE:$RELEASE_VERSION-sources"; exit 1; }
+            grep -qF "github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" "artifacts/container/$arch/SOURCES.txt" || { echo 'SOURCES.txt does not name this GitHub release'; exit 1; }
+          done
+      - name: Ensure public Docker repository and immutable version tags
+        run: node scripts/release-docker-check.mjs
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      # This same run publishes: tags created with GITHUB_TOKEN do not trigger push workflows.
+      - name: Create or verify the release tag and draft GitHub release
+        run: node scripts/release-github.mjs --prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  publish-npm:
+    if: needs.prepare.outputs.publish == 'true'
+    needs: [prepare, validate, preflight]
+    # The one GitHub-hosted job: npm provenance and Trusted Publishing need a
+    # GitHub-hosted runner and the workflow's OIDC identity. It runs no repository code
+    # beyond scripts/release-npm.mjs (node built-ins only; no npm ci, no build).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.2'
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate-npm
+          path: artifacts
+      - name: Re-verify the tested npm artifacts
+        run: |
+          set -euo pipefail
+          (cd artifacts && sha256sum -c reports/npm-SHA256SUMS)
+          test "$(cat artifacts/reports/source-commit.txt)" = "$GITHUB_SHA"
+      # Trusted Publishing needs npm 11.5.1 or newer; the npm bundled with Node 22 is older.
+      - name: Install a pinned npm that supports provenance and Trusted Publishing
+        run: |
+          npm install -g npm@11.21.0
+          npm --version
+      - name: Check npm authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            npm whoami --registry https://registry.npmjs.org
+          else
+            echo 'No NPMJS_TOKEN: publishing through npm Trusted Publishing (OIDC). Each package must list this workflow as its Trusted Publisher (docs/PUBLISHING.md).'
+          fi
+      - name: Publish tested npm tarballs in dependency order, with provenance
+        run: node scripts/release-npm.mjs artifacts/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}
+
+  publish:
+    if: needs.prepare.outputs.publish == 'true'
+    needs: [prepare, validate, containers, preflight, publish-npm]
     runs-on: [self-hosted, Linux, X64, arc-amd64]
     timeout-minutes: 30
     permissions:
@@ -185,25 +289,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: { persist-credentials: false }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22.23.2'
-          registry-url: https://registry.npmjs.org
+        with: { node-version: '22.23.2' }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-candidate-*
           merge-multiple: true
           path: artifacts
-      - name: Verify all artifacts and required publication settings
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}
-          DOCKER_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKER_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Verify the saved images and record the combined checksums
         run: |
           set -euo pipefail
-          test -n "$NODE_AUTH_TOKEN" || { echo 'Missing NPMJS_TOKEN'; exit 1; }
-          test -n "$DOCKER_USERNAME" || { echo 'Missing DOCKERHUB_USERNAME'; exit 1; }
-          test -n "$DOCKER_TOKEN" || { echo 'Missing DOCKERHUB_TOKEN'; exit 1; }
-          [[ "$DOCKERHUB_IMAGE" =~ ^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9._-]*$ ]] || { echo 'Set DOCKERHUB_IMAGE to namespace/repository'; exit 1; }
           (cd artifacts && sha256sum -c reports/npm-SHA256SUMS)
           test "$(cat artifacts/reports/source-commit.txt)" = "$GITHUB_SHA"
           for arch in amd64 arm64; do
@@ -217,11 +311,7 @@ jobs:
             sources_image="tracery-release-sources:$GITHUB_RUN_ID-$arch"
             test "$(docker image inspect "$sources_image" --format '{{.Id}}')" = "$(cat "artifacts/container/$arch/sources-image-id.txt")"
             test "$(docker image inspect "$sources_image" --format '{{.Os}}/{{.Architecture}}')" = "linux/$arch"
-            # The image's SOURCES.txt must name the places this job publishes the sources.
-            grep -qF "$DOCKERHUB_IMAGE:$RELEASE_VERSION-sources" "artifacts/container/$arch/SOURCES.txt" || { echo "SOURCES.txt does not name $DOCKERHUB_IMAGE:$RELEASE_VERSION-sources"; exit 1; }
-            grep -qF "github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" "artifacts/container/$arch/SOURCES.txt" || { echo 'SOURCES.txt does not name this GitHub release'; exit 1; }
           done
-          npm whoami --registry https://registry.npmjs.org
           cd artifacts
           find npm container reports -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -230,22 +320,9 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Ensure public Docker repository and immutable version tags
-        run: node scripts/release-docker-check.mjs
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Create or verify the release tag and draft GitHub release
-        run: node scripts/release-github.mjs --prepare
-        env:
-          GH_TOKEN: ${{ github.token }}
-      # This same run publishes: tags created with GITHUB_TOKEN do not trigger push workflows.
-      - name: Publish tested npm tarballs in dependency order
-        run: node scripts/release-npm.mjs artifacts/npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}
       - name: Publish tested source images, then architecture images and multi-platform tags
         run: node scripts/release-docker-publish.mjs
+      # Undrafts the release, so it only runs once npm (publish-npm) and Docker Hub are both published.
       - name: Publish GitHub release and evidence
         run: node scripts/release-github.mjs
         env:

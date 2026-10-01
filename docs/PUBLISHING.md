@@ -1,7 +1,8 @@
 # Publishing npm and Docker releases
 
 Publication runs through [release.yaml](../.github/workflows/release.yaml) on
-Atriarch's self-hosted runners. Use its manual **validate** operation for a dry
+Atriarch's self-hosted runners, except the npm publish job, which runs on a GitHub-hosted
+runner so the packages carry npm provenance (see "How the publication jobs are split"). Use its manual **validate** operation for a dry
 run, or **publish** to validate, create the version tag, and publish npm packages,
 Docker images and the GitHub release in one run. Ordinary version-tag pushes
 remain supported. No additional personal GitHub token is required.
@@ -13,7 +14,7 @@ restricted to `Atriarch-Systems/tracery-graph`:
 
 | Secret | Value to obtain |
 | --- | --- |
-| `NPMJS_TOKEN` | An npmjs.com granular access token with read/write permission to the `@atriarch-systems` scope and **Bypass 2FA** enabled for non-interactive publishing (see "Trusted Publishing: not available" below for why Bypass 2FA is required here). The token's owner must have publication rights to that scope. Use the shortest practical expiration and rotate it. |
+| `NPMJS_TOKEN` | An npmjs.com granular access token with read/write permission to the `@atriarch-systems` scope and **Bypass 2FA** enabled for non-interactive publishing (see "npm authentication" below; it becomes unnecessary once Trusted Publishing is set up). The token's owner must have publication rights to that scope. Use the shortest practical expiration and rotate it. |
 | `DOCKERHUB_USERNAME` | The Docker ID of the account that owns the access token and can push to the target repository; this can differ from the organization namespace. |
 | `DOCKERHUB_TOKEN` | That Docker account's access token with read/write access to the target repository. Delete permission is unnecessary. |
 
@@ -31,39 +32,80 @@ Confirm that the `@atriarch-systems` npm scope belongs to your account or organi
 Organization administration permissions on an npm token are not a substitute
 for package/scope publication permissions.
 
-The publication job uses its short-lived `GITHUB_TOKEN` for the tag and GitHub
-release. Registry secrets are available only to that job, after all validation
-jobs succeed. Do not put tokens in source files, issue comments or chat.
+The publication jobs use the short-lived `GITHUB_TOKEN` for the tag and GitHub
+release. Registry secrets are available only to the job that uses them, after all
+validation jobs succeed.
 
-npm currently supports trusted publishing on GitHub-hosted runners, **not
-self-hosted runners**, so this workflow uses a granular token. See the official
-[npm trusted-publishing requirements](https://docs.npmjs.com/trusted-publishers/),
-[npm token setup](https://docs.npmjs.com/creating-and-viewing-access-tokens/), and
-[Docker access-token setup](https://docs.docker.com/security/access-tokens/).
+## How the publication jobs are split
 
-### Trusted Publishing: not available, same reason
+`release.yaml` runs everything on Atriarch's self-hosted runners except one job:
 
-npm's Trusted Publishing — the CI job logging in over OIDC instead of presenting a
-stored token — is what npmjs.com points you to when you create a granular token
-with **Bypass 2FA** enabled, and it is the warning shown on the token creation
-page. Per the [trusted-publishing requirements](https://docs.npmjs.com/trusted-publishers/)
-it needs GitHub-hosted runners: "self-hosted runners are not currently supported
-but are planned for future releases." This org's release workflow therefore cannot
-use it, the `NPMJS_TOKEN` granular token with Bypass 2FA is the intended mechanism,
-and that warning is expected. Keep the token's blast radius small:
+| Job | Runner | Does |
+| --- | --- | --- |
+| `prepare`, `validate`, `containers` | self-hosted | Version checks, tests, both native container builds. |
+| `preflight` | self-hosted | Verifies every artifact checksum and the tested commit, checks the Docker settings, then creates the annotated tag and the **draft** GitHub release. |
+| `publish-npm` | **`ubuntu-latest` (GitHub-hosted)** | Downloads `release-candidate-npm`, re-verifies its checksums and every tarball digest, and publishes each exact tarball with `npm publish --provenance`. Permissions: `contents: read`, `id-token: write`. |
+| `publish` | self-hosted | Loads and verifies the saved images, publishes the source images, architecture images and multi-platform tags to Docker Hub, then uploads the evidence and **undrafts** the GitHub release. |
 
-- Scope it to the `@atriarch-systems` scope only, never "all packages". After the first
-  publish, narrow it again to the five published packages; npm allows
-  package-level restriction only once the packages exist.
-- Set expiration to 30–90 days and rotate on schedule.
-- Store it only as the `Atriarch-Systems` organization Actions secret
-  `NPMJS_TOKEN`, with repository access limited to `tracery-graph`.
-- The workflow reads it only in the publication job, after every artifact
-  checksum and the `npm whoami` check.
+They run in that order (`publish-npm` needs `preflight`; `publish` needs `publish-npm`), so
+the GitHub release only leaves draft after both npm and Docker Hub are published, and a
+failure at any step stops everything after it.
 
-Revisit this if the org ever adds a GitHub-hosted runner reserved for the
-publication job: that would enable both Trusted Publishing and provenance
-attestations.
+Why `publish-npm` is the one GitHub-hosted job: npm can sign
+[provenance](https://docs.npmjs.com/generating-provenance-statements) and accept
+[Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) only from a GitHub-hosted
+runner with the workflow's OIDC identity (`id-token: write`); self-hosted runners are not
+supported. It runs no repository code beyond `scripts/release-npm.mjs` (Node built-ins only,
+no `npm ci`, no build), downloads only the npm artifact, and holds no Docker credentials.
+The Docker secrets exist only in `preflight` and `publish`; the npm token only in `publish-npm`.
+
+`scripts/release-npm.mjs` publishes with `--provenance`, keeps its idempotent "already
+published with matching integrity" skip (different bytes under an existing version fail the
+run before anything is published), and afterwards requires the registry to list a provenance
+attestation for every package it published in that run (a package skipped because an identical
+version is already on npm, such as an unchanged visualizer, is not held to this). A version
+that went out without provenance cannot be repaired by retrying; release a new patch version.
+
+## npm authentication: token now, Trusted Publishing later
+
+The job works with either, and prefers OIDC when a package has a Trusted Publisher.
+
+**Today: the `NPMJS_TOKEN` secret.** Used as `NODE_AUTH_TOKEN` in `publish-npm` only, after the
+artifact checksums and `npm whoami`. Keep its blast radius small:
+
+- Scope it to the `@atriarch-systems` scope only, never "all packages", and narrow it to the
+  five published packages (npm allows package-level restriction only once they exist).
+- It needs **Bypass 2FA** for non-interactive publishing. Set a 30-90 day expiry and rotate it.
+- Store it only as the `Atriarch-Systems` organization Actions secret `NPMJS_TOKEN`, with
+  repository access limited to `tracery-graph`.
+
+**Later: Trusted Publishing (no token).** Configure this once per package on npmjs.com, under
+each package's **Settings → Trusted Publisher → GitHub Actions**:
+
+| Field | Value |
+| --- | --- |
+| Organization or user | `Atriarch-Systems` |
+| Repository | `tracery-graph` |
+| Workflow filename | `release.yaml` (the file name only, with the extension, exactly as in `.github/workflows/`) |
+| Environment name | leave empty (the workflow uses no GitHub environment) |
+
+Repeat for all five packages: `@atriarch-systems/tracery-core`, `-visualizer`, `-client`,
+`-react` and `-hub`. Then:
+
+1. Publish one release and confirm `publish-npm` succeeds and each package shows a provenance
+   badge on npmjs.com.
+2. Delete the `NPMJS_TOKEN` Actions secret. The job then prints that it is using OIDC and
+   publishes without any stored credential (`npm whoami` is skipped; OIDC is exercised by
+   the publish itself).
+3. Optionally, in each package's **Settings → Publishing access**, choose *Require two-factor
+   authentication and disallow tokens*, and revoke the old granular token on npmjs.com.
+
+Do not add a GitHub environment to `publish-npm` unless you also enter its name in the
+Trusted Publisher settings; a mismatch is rejected. The job installs a pinned `npm@11.21.0`
+because Trusted Publishing needs npm 11.5.1 or newer and Node 22 bundles an older npm.
+
+Docker Hub and registry tokens are separate: see the secrets table above. Do not put tokens in
+source files, issue comments or chat.
 
 ## Release from the GitHub UI
 
@@ -87,8 +129,8 @@ attestations.
    without a `v`, for example `0.1.1`.
 4. After validation and credential checks succeed, the workflow creates an
    annotated `v0.1.1` tag at the exact tested commit and a draft GitHub release.
-   It publishes the tested npm tarballs and Docker images, attaches the evidence,
-   and publishes the GitHub release. An existing tag must already resolve to
+   It publishes the tested npm tarballs (with provenance) and Docker images,
+   attaches the evidence, and publishes the GitHub release. An existing tag must already resolve to
    that same commit; the workflow never moves it.
 5. Check the release run and run the post-publication section of
    [CLEAN-MACHINE-TEST.md](CLEAN-MACHINE-TEST.md) from a clean machine. Update the
@@ -132,7 +174,9 @@ visualizer, client, React and hub, installs the actual tarballs into a fresh
 consumer, checks imports/SSR, launches `npx tracery-hub`, and tests live tracing.
 Each tarball must contain LICENSE and NOTICE; the hub must include its hosted UI
 and third-party notices. Publication uses those exact tarballs with lifecycle
-scripts disabled, rather than repacking them. Private workspaces are not published.
+scripts disabled and with `--provenance`, rather than repacking them. The hub tarball must contain
+the pre-generated `openapi.json`, and `publish:check` fails if the installed hub lists `@fastify/swagger`
+as a runtime dependency. Private workspaces are not published.
 
 The pinned Node/Alpine containers have no shell, apk, npm or Yarn. The runtime
 image does not contain the corresponding Alpine sources; the same build's
@@ -150,9 +194,9 @@ components retain their licenses and source obligations.
 
 Actions retains `release-candidate-npm`, `release-candidate-container-amd64` and
 `release-candidate-container-arm64` for 30 days. They contain the actual tarballs,
-saved images and evidence, with checksums and the tested commit. The publication
-job verifies all three before loading the saved images and forming the combined
-manifest from immutable digests. It does not rebuild either image.
+saved images and evidence, with checksums and the tested commit. The `preflight`
+job verifies all three, `publish-npm` re-verifies the npm one, and `publish` verifies them again before loading
+the saved images and forming the combined manifest from immutable digests. It does not rebuild either image.
 
 GitHub release assets include npm tarballs, source/report evidence and separately
 named `container-amd64-*` and `container-arm64-*` source archives
@@ -208,8 +252,9 @@ the first upload, not a preparation step.
 ## Retries and partial publication
 
 Registries cannot publish atomically together. If a publication job fails, fix
-the credentials or connection problem and rerun **only that failed job** from
-the same Actions run. It reuses the validated artifacts. Existing tags, npm
+the credentials or connection problem and rerun **only the failed job** from
+the same Actions run (`publish-npm` or `publish`; the jobs after it then run). It reuses the validated
+artifacts. A rerun of `publish-npm` skips packages already on npm with identical bytes. Existing tags, npm
 versions, architecture images and GitHub assets must match; mismatches fail
 rather than overwrite evidence. A draft release stays draft until all assets
 are uploaded and both registries have been published.
