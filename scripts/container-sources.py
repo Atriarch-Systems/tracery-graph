@@ -87,7 +87,8 @@ def collect():
     root.mkdir()
     git = Path('/aports')
     run('git', 'init', str(git))
-    run('git', 'remote', 'add', 'origin', 'https://github.com/alpinelinux/aports.git', cwd=git)
+    # The canonical aports repository: the GitHub mirror can lag a point release behind the packages.
+    run('git', 'remote', 'add', 'origin', 'https://gitlab.alpinelinux.org/alpine/aports.git', cwd=git)
     origins = sorted({(p['origin'], p['aportsCommit']) for p in packages})
     run('git', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', 'fetch', '--depth=1',
         'origin', *sorted({commit for _, commit in origins}), cwd=git)

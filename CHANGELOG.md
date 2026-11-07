@@ -38,6 +38,13 @@ visualizer 0.4.0.
 
 - No code changes; they move to core 0.1.4 and visualizer 0.4.0. Helm `appVersion` and the k8s
   image tag follow.
+- Hub image: Alpine 3.24.4 (was 3.24.2), with the runtime packages re-pinned to what the 3.24
+  repository now serves (`alpine-release` 3.24.4-r0, `musl` 1.2.6-r3, `ca-certificates-bundle`
+  20261020-r0; `libgcc`/`libstdc++` unchanged). The old pins had left the repository, so the image
+  no longer built. `licenses/container-policy.json` records the new versions and aports commits.
+  The source collector now fetches recipes from the canonical aports repository
+  (gitlab.alpinelinux.org) instead of the GitHub mirror, which lagged a point release behind
+  (it lacked the 3.24.4 release commit).
 
 ## v0.1.3
 

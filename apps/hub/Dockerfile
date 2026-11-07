@@ -70,11 +70,11 @@ RUN rm -rf node_modules packages/*/node_modules apps/*/node_modules apps/hub/web
 # present, so Trivy and SBOM tools still see them, and it drives the source
 # collection below. Versions are pinned; changing them requires a new review
 # (licenses/container-policy.json).
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS rootfs
+FROM alpine:3.24.4@sha256:93b41ef40b1677fce8fcc64ff4af09daddfacf5040afde618bc46c1e2d1cc7d4 AS rootfs
 RUN apk add --no-cache --root /rootfs --initdb --no-scripts \
       --keys-dir /etc/apk/keys --repositories-file /etc/apk/repositories \
-      alpine-release=3.24.2-r0 musl=1.2.6-r2 libgcc=15.2.0-r5 libstdc++=15.2.0-r5 \
-      ca-certificates-bundle=20260909-r0 \
+      alpine-release=3.24.4-r0 musl=1.2.6-r3 libgcc=15.2.0-r5 libstdc++=15.2.0-r5 \
+      ca-certificates-bundle=20261020-r0 \
  && rm -rf /rootfs/var/log /rootfs/var/cache \
  && mkdir -p /rootfs/tmp /rootfs/usr/local/bin /volume/data \
  && chmod 1777 /rootfs/tmp \
@@ -87,7 +87,7 @@ RUN chroot /rootfs /usr/local/bin/node -e "require('node:crypto').randomUUID(); 
 
 # Collect sources for the runtime inventory. This runs in every build, so a
 # runtime image is only produced once its matching sources have verified.
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS sources
+FROM alpine:3.24.4@sha256:93b41ef40b1677fce8fcc64ff4af09daddfacf5040afde618bc46c1e2d1cc7d4 AS sources
 RUN apk add --no-cache python3 git abuild xz
 COPY --from=rootfs /rootfs/lib/apk/db/installed /runtime-installed
 COPY scripts/container-sources.py /container-sources.py
