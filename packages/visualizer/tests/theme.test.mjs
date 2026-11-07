@@ -225,19 +225,19 @@ test('theme.travelingDot / travelingDotGlow change the traveling-call dot', () =
 });
 
 test('theme.edgeLabelBg changes the edge label pill background', () => {
-  const link = linkOf({ showLabel: true });
+  const link = linkOf({ label: 'call', showLabel: true });
   const { calls: defaultCalls } = (() => { const c = fakeCtx(); drawLink(link, c.ctx, null, true); return c; })();
   const { calls: customCalls } = (() => { const c = fakeCtx(); drawLink(link, c.ctx, null, true, resolveGraphTheme({ edgeLabelBg: '#123456' })); return c; })();
   assert.notDeepEqual(fillStyles(customCalls), fillStyles(defaultCalls));
 });
 
 test('theme.edgeLabelTextIdle / edgeLabelTextBright change the edge label text color', () => {
-  const idle = linkOf({ showLabel: true });
+  const idle = linkOf({ label: 'call', showLabel: true });
   const { calls: idleDefault } = (() => { const c = fakeCtx(); drawLink(idle, c.ctx, null, true); return c; })();
   const { calls: idleCustom } = (() => { const c = fakeCtx(); drawLink(idle, c.ctx, null, true, resolveGraphTheme({ edgeLabelTextIdle: '#123456' })); return c; })();
   assert.notDeepEqual(fillStyles(idleCustom), fillStyles(idleDefault));
 
-  const bright = linkOf({ showLabel: true, activity: { highlighted: true } });
+  const bright = linkOf({ label: 'call', showLabel: true, activity: { highlighted: true } });
   const { calls: brightDefault } = (() => { const c = fakeCtx(); drawLink(bright, c.ctx, null, true); return c; })();
   const { calls: brightCustom } = (() => { const c = fakeCtx(); drawLink(bright, c.ctx, null, true, resolveGraphTheme({ edgeLabelTextBright: '#123456' })); return c; })();
   assert.notDeepEqual(fillStyles(brightCustom), fillStyles(brightDefault));
@@ -267,4 +267,16 @@ test('resolveGraphTheme fills unset fields with DEFAULT_GRAPH_THEME defaults and
   assert.equal(resolved.nodeFillActive, DEFAULT_GRAPH_THEME.nodeFillActive);
   assert.deepEqual(resolveGraphTheme(), DEFAULT_GRAPH_THEME);
   assert.deepEqual(resolveGraphTheme(undefined), DEFAULT_GRAPH_THEME);
+});
+
+test('theme.nodeAccentIdleMix shows an idle node its own accent; unset keeps the grey idle accent', () => {
+  const idle = nodeOf({ presentation: { accent: '#ff0000' } });
+  const draw = (theme) => { const c = fakeCtx(); drawNode(idle, c.ctx, null, true, 1, theme); return fillStyles(c.calls); };
+  const plain = draw(DEFAULT_GRAPH_THEME);
+  assert.ok(plain.includes('rgb(119,130,125)'), 'unset: the bar is nodeAccentIdle');
+  assert.deepEqual(draw(resolveGraphTheme({ nodeAccentIdleMix: 0 })), plain);
+  const full = draw(resolveGraphTheme({ nodeAccentIdleMix: 1 }));
+  assert.ok(full.includes('rgb(255,0,0)'), 'mix 1: the bar is the node accent');
+  assert.ok(!full.includes('rgb(119,130,125)'));
+  assert.deepEqual(draw(resolveGraphTheme({ nodeAccentIdleMix: 7 })), full, 'clamped to 1');
 });

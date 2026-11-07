@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+## v0.1.4
+
+Easier-to-read activity graphs: pipelines lay out left to right, single call edges lose their
+`×1` labels, and idle cards can keep their accent colour. Core, client, React and hub 0.1.4;
+visualizer 0.4.0.
+
+### Visualizer 0.4.0
+
+- **Data edges order siblings into columns.** In `placeBranches` (guided layout), a node with
+  `kind: 'data'` edges from siblings (nodes with the same placement parent) is placed to the right
+  of the furthest of them, on that sibling's row, after they are placed. A pipeline whose steps are
+  all called by one parent now reads left to right; before, every step stacked in one column beside
+  the parent, alternating above and below it. Data edges still never make a node anyone's
+  placement parent; a `lane` hint still sets the row; data cycles still place every node. Graphs
+  without data edges between siblings are laid out exactly as before. **Upgrade note:** guided
+  layouts with such edges change shape. Positions you saved from an earlier version are kept as
+  they are; only newly placed cards follow the new rule.
+- **Edge labels say only what is useful.** A label pill reads `invoke` for a single edge and
+  `invoke ×3` for a repeated one (it read `invoke ×1` before). An edge with no label and a count
+  of 1 draws no pill, even with `showLabel`.
+- **Spawn edges are thinner**: 1 px wider than a call edge of the same count instead of 2.5 px.
+- **`GraphTheme.nodeAccentIdleMix`** (optional, 0-1, default 0): how much of a node's own
+  accent stays on its accent bar and detail text once it is idle. Set it to 1 when the accent
+  carries meaning that outlives activity, such as a finished step's state. Unset, idle cards
+  draw exactly as before.
+
+### Core 0.1.4
+
+- **Call edges no longer ask for a label** (`showLabel: false`; it was `true`). The visualizer
+  still labels an edge once its count is above 1 or an end is selected, so a graph of single
+  calls is no longer covered in `invoke ×1` pills. Spawn edges keep `showLabel: true`.
+
+### Client, React and hub 0.1.4
+
+- No code changes; they move to core 0.1.4 and visualizer 0.4.0. Helm `appVersion` and the k8s
+  image tag follow.
+
 ## v0.1.3
 
 Supply-chain hardening: a smaller hub dependency tree, an opt-in OpenAPI document and npm provenance.

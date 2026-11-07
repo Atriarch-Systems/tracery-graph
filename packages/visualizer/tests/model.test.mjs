@@ -114,7 +114,8 @@ test('custom cards and self edges render without any registered domain kind', as
   drawLink(graph.links[0],ctx,null,true);
   assert.ok(text.includes('Z  POLICY'));
   assert.ok(text.includes('Configured by consumer'));
-  assert.ok(text.includes('repeat ×1'));
+  assert.ok(text.includes('repeat'), 'a single edge is labelled by name alone');
+  assert.ok(!text.some(t => t.includes('×1')), 'no lone ×1 count');
   assert.ok(curves[0][0]>95, 'self edge must curve outside its card');
 });
 
@@ -176,4 +177,19 @@ test('guided nodes retain exact placements through the first physics ticks, upda
   const simulation = forceSimulation(free.nodes).force('charge', forceManyBody()).stop();
   simulation.tick(5);
   assert.notEqual(free.nodes[0].y, expected[0].y, 'force layout must remain free to move');
+});test('edge labels: name alone for one call, name ×n when repeated, nothing for an unnamed single edge', async () => {
+  const { drawLink } = await import('../dist/drawing.js');
+  const draw = (spec) => {
+    const text = [];
+    const ctx = new Proxy({}, { get: (_t, key) => key === 'measureText' ? v => ({width:v.length*6}) : key === 'fillText' ? v => text.push(v) : () => {}, set: () => true });
+    const graph = reconcile(emptyGraph(), [{id:'a',label:'A'},{id:'b',label:'B'}], [{id:'e',source:'a',target:'b',...spec}]);
+    graph.links[0].source = graph.nodes[0]; graph.links[0].target = graph.nodes[1];
+    drawLink(graph.links[0], ctx, null, true);
+    return text;
+  };
+  assert.deepEqual(draw({label:'invoke', showLabel:true}), ['invoke']);
+  assert.deepEqual(draw({label:'invoke', count:3}), ['invoke ×3']);
+  assert.deepEqual(draw({label:'invoke'}), [], 'a single call edge is unlabelled unless asked or selected');
+  assert.deepEqual(draw({showLabel:true}), []);
+  assert.deepEqual(draw({count:2}), ['×2']);
 });

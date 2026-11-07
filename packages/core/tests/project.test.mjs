@@ -57,6 +57,7 @@ test('flow scope: call and data edges carry counts and kinds', () => {
   const callEdge = projection.edges.find((e) => e.source === 'llm:main' && e.target === 'tool:search');
   assert.equal(callEdge.kind, 'call');
   assert.equal(callEdge.count, 1);
+  assert.equal(callEdge.showLabel, false, 'a single call is unlabelled until it repeats or an end is selected');
 });
 
 test('flow scope: never emits a spawn edge even though the flow has a link', () => {
@@ -100,6 +101,7 @@ test('ancestors scope: spawn edge with layout.parentId pointing at the spawner n
 
   const spawnEdge = projection.edges.find((e) => e.kind === 'spawn');
   assert.ok(spawnEdge, 'expected a spawn edge');
+  assert.equal(spawnEdge.showLabel, true);
   assert.equal(spawnEdge.source, 'agent:orchestrator::tool:search');
   assert.equal(spawnEdge.target, 'subagent:research-1::llm:main');
 

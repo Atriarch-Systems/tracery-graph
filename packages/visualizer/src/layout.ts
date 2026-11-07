@@ -5,7 +5,8 @@ export type PlacementState = ReadonlyMap<string, Placement>;
 const dimensions = (n: ActivityNode) => ({ width: Math.max(70, n.presentation?.width ?? 138), height: Math.max(62, n.presentation?.height ?? 62) });
 
 /** Incremental placement: append beside the first observed parent; never reflow existing cards.
- * Return edges and repeated counts have no influence on placement. Hints are presentation only.
+ * A node with 'data' edges from siblings (same placement parent) goes right of them, on the row of the
+ * furthest one. Return edges and repeated counts have no influence on placement. Hints are presentation only.
  */
 export function placeBranches<N>(nodes: readonly ActivityNode<N>[], edges: readonly ActivityEdge[], previous: PlacementState = new Map()) {
   const positions = new Map<string, Placement>();
@@ -22,6 +23,20 @@ export function placeBranches<N>(nodes: readonly ActivityNode<N>[], edges: reado
     if (e.source !== e.target && (e.kind ?? 'call') !== 'data' && !firstParent.has(e.target)) firstParent.set(e.target, e.source);
   }
   const parentOf = (node: ActivityNode) => node.layout?.parentId ?? firstParent.get(node.id);
+  // 'data' edges between siblings (nodes sharing a placement parent) order them into columns: a node sits
+  // to the right of the siblings it reads from, so a pipeline under one parent reads left to right instead
+  // of stacking in a single column. They still never make a node anyone's placement parent.
+  const dataSources = new Map<string, string[]>();
+  for (const e of edges) {
+    if ((e.kind ?? 'call') !== 'data' || e.source === e.target || !byId.has(e.source)) continue;
+    const list = dataSources.get(e.target);
+    if (list) { if (!list.includes(e.source)) list.push(e.source); } else dataSources.set(e.target, [e.source]);
+  }
+  const siblingSources = (node: ActivityNode) => {
+    const parentId = parentOf(node);
+    if (!parentId || node.position?.anchored) return [];
+    return (dataSources.get(node.id) ?? []).filter(id => parentOf(byId.get(id)!) === parentId);
+  };
   let anchoredCount = 0;
   for (const id of positions.keys()) if (byId.get(id)?.position?.anchored) anchoredCount++;
   const collides = (x: number, y: number, size: {width: number; height: number}) => [...positions.values()].some(p =>
@@ -34,6 +49,16 @@ export function placeBranches<N>(nodes: readonly ActivityNode<N>[], edges: reado
     const rootCount = anchoredCount;
     let x = parent ? parent.x + parent.width / 2 + size.width / 2 + 76 : 0;
     let y = node.layout?.lane !== undefined ? node.layout.lane * 90 : parent?.y ?? rootCount * 260;
+    // Right of the furthest placed sibling it reads from, on that sibling's row (a lane hint still wins).
+    let upstream: Placement | undefined;
+    for (const id of siblingSources(node)) {
+      const p = positions.get(id);
+      if (p && (!upstream || p.x > upstream.x)) upstream = p;
+    }
+    if (upstream) {
+      x = Math.max(x, upstream.x + upstream.width / 2 + size.width / 2 + 76);
+      if (node.layout?.lane === undefined) y = upstream.y;
+    }
     if (node.position?.anchored) { x = 0; y = rootCount * 310; }
     if (group) { x += (slot % 3) * (size.width + 42); y += Math.floor(slot / 3) * (size.height + 38); }
     // Search nearby free rows, preserving a forward-growing branch and all occupied slots.
@@ -49,7 +74,9 @@ export function placeBranches<N>(nodes: readonly ActivityNode<N>[], edges: reado
     let progress = false;
     for (let i = 0; i < pending.length;) {
       const node = pending[i], parent = parentOf(node);
-      if (node.position?.anchored || !parent || !byId.has(parent) || positions.has(parent)) {
+      const ready = node.position?.anchored || !parent || !byId.has(parent) || positions.has(parent);
+      // Wait for the siblings it reads from too; a data cycle falls through to the forced insert below.
+      if (ready && siblingSources(node).every(id => positions.has(id))) {
         insert(node); pending.splice(i,1); progress = true;
       } else i++;
     }

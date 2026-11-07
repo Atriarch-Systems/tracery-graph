@@ -38,7 +38,7 @@ The consumer owns its node catalog, stable IDs, domain events, aggregation/count
 
 `ActivityNode<Data>`, `ActivityEdge<Data>`, `ActivityGroup`, `NodePresentation`, `Activity`, `ActivityGraphProps` and `ActivityGraphHandle` are exported. `./types` is a renderer-free import. `VISUALIZER_CONTRACT_VERSION` is 3; it versions the presentation contract, not any WebSocket protocol. The data parameter lets each application retain strongly typed inspector data.
 
-All times are epoch milliseconds. `highlighted` lights an item; `completedAt` fades that highlight to gray; `removedAt` fades it out. The application removes expired items from its arrays. `updatedAt` animates a call traveling along an edge. Distinct edge IDs preserve incoming/outgoing and different relationship counts. Edge curvature, labels and accent are caller configuration. Different node types are presets of the same card, not renderer subclasses.
+All times are epoch milliseconds. `highlighted` lights an item; `completedAt` fades that highlight to gray; `removedAt` fades it out. The application removes expired items from its arrays. `updatedAt` animates a call traveling along an edge. Distinct edge IDs preserve incoming/outgoing and different relationship counts. Edge curvature, labels and accent are caller configuration. An edge's label pill is drawn when its `count` is above 1, when `showLabel` is set, or when either end is selected; it reads `invoke` for a single edge and `invoke ×3` for a repeated one, and an unnamed single edge has no pill. Different node types are presets of the same card, not renderer subclasses.
 
 Executing nodes pulse with a breathing border and halo. `active` defaults to `status === 'running'`; set it explicitly to preserve an error state while another operation on the same node is still executing. Completed or unhighlighted nodes never pulse. Reduced motion keeps a static active border and indicator.
 
@@ -105,6 +105,11 @@ the theme's fallback accent fields (`nodeAccentFallback`/`groupAccentFallback`)
 supplied none. `resolveGraphTheme(partial?)` (used internally, and available
 to consumers building layered themes) fills in every unset field explicitly.
 
+A node's accent bar and detail text show its `presentation.accent` only while it is
+active and fade back to `nodeAccentIdle` afterwards. When the accent carries meaning
+that outlives activity (a finished step's state, say), set `nodeAccentIdleMix` between
+0 (the default) and 1 to keep that much of the accent on idle cards.
+
 ## Guided placement
 
 `placeBranches(nodes, edges, previousPositions)` returns new node positions and a
@@ -125,6 +130,13 @@ or fit a growing graph. The normal force layout remains available for applicatio
 edge whose `target` is that node. Edges with `kind: 'data'` are skipped when looking for a
 parent (a data dependency is not a call chain); `'spawn'` edges (and the default `'call'`) are
 valid parents.
+
+`data` edges between siblings (nodes with the same placement parent) order them into columns:
+a node goes to the right of the furthest sibling it reads from, on that sibling's row (a `lane`
+hint still sets the row), and is placed after those siblings. A pipeline whose steps are all
+called by one parent therefore reads left to right instead of stacking in one column. A data
+edge from a node with another parent does not move the node, and a data cycle between siblings
+still produces finite positions.
 
 ## Groups and traces
 
@@ -179,7 +191,7 @@ drags with nothing extra to observe.
 
 `ActivityEdge.kind` distinguishes three relationships, default `'call'`. `'data'` draws a dashed
 line and is excluded from `placeBranches` parent selection and from force-link pull. `'spawn'`
-draws thicker in the edge's accent color with a small hollow circle at the source end — the
+draws slightly thicker in the edge's accent color with a small hollow circle at the source end — the
 convention for "this flow spawned that one" — and, like `'data'`, gets force-link strength 0 so
 spawned subgraphs don't get yanked back toward their spawner.
 
