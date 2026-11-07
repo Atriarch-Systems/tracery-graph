@@ -286,7 +286,8 @@ export function project(flows: ReadonlyMap<string, Flow>, scope: Scope, options?
       target: agg.target,
       label: agg.relation,
       count: agg.record.count,
-      showLabel: agg.kind === 'call',
+      // A single call reads from the arrow alone; the label shows once it repeats or an end is selected.
+      showLabel: false,
       activity: { highlighted: agg.highlighted, updatedAt: agg.record.lastAt },
       kind: agg.kind,
       data: { flow: agg.flowId, edge: agg.record },

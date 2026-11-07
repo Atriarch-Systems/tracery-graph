@@ -16,7 +16,8 @@ export const drawNode = (node: RuntimeNode, ctx: CanvasRenderingContext2D, selec
     const breath = active && !reducedMotion ? (1 + Math.sin(now * Math.PI * 2 / 1800)) / 2 : 0;
     const hot = errorColor(node.spec.status, node.spec.presentation?.accent, theme);
     const error = node.spec.status === 'error';
-    const color = error ? blend(theme.errorDim, theme.errorBright, amount) : blend(theme.nodeAccentIdle, accent(node.spec.presentation?.accent, theme.nodeAccentFallback), amount);
+    const idleMix = Math.min(1, Math.max(0, theme.nodeAccentIdleMix ?? 0));
+    const color = error ? blend(theme.errorDim, theme.errorBright, amount) : blend(theme.nodeAccentIdle, accent(node.spec.presentation?.accent, theme.nodeAccentFallback), Math.max(amount, idleMix));
     const { w, h } = box(node), x = node.x - w / 2, y = node.y - h / 2;
     ctx.save(); ctx.globalAlpha = opacity(node.spec.activity, now) * groupAlpha;
     if (current && !reducedMotion && shadows) {
@@ -67,7 +68,7 @@ export const drawLink = (link: RuntimeEdge, ctx: CanvasRenderingContext2D, selec
     ctx.save(); ctx.globalAlpha = opacity(link.spec.activity, now);
     const lineColor = kind === 'spawn' ? accent(link.spec.accent, theme.edgeAccentFallback) : blend(theme.edgeLineIdle, accent(link.spec.accent, theme.edgeAccentFallback), amount);
     ctx.strokeStyle = lineColor;
-    ctx.lineWidth = kind === 'spawn' ? edgeWidth(link.spec.count ?? 1) + 2.5 : edgeWidth(link.spec.count ?? 1);
+    ctx.lineWidth = kind === 'spawn' ? edgeWidth(link.spec.count ?? 1) + 1 : edgeWidth(link.spec.count ?? 1);
     ctx.lineCap = 'round';
     ctx.setLineDash(kind === 'data' ? [6, 4] : []);
     ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.quadraticCurveTo(cx, cy, end.x, end.y); ctx.stroke();
@@ -88,7 +89,11 @@ export const drawLink = (link: RuntimeEdge, ctx: CanvasRenderingContext2D, selec
       ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
     }
     if ((link.spec.count ?? 1) > 1 || link.spec.showLabel || selected === a.id || selected === b.id) {
-      const p = point(.5), label = `${(link.spec.label ?? "")} ×${(link.spec.count ?? 1)}`;
+      // `invoke`, or `invoke ×3` for a repeated edge: a lone `×1` says nothing.
+      const count = link.spec.count ?? 1, name = link.spec.label ?? '';
+      const label = count > 1 ? (name ? `${name} ×${count}` : `×${count}`) : name;
+      if (!label) { ctx.restore(); return; }
+      const p = point(.5);
       ctx.font = '10px system-ui'; const width = ctx.measureText(label).width + 12;
       ctx.fillStyle = theme.edgeLabelBg; ctx.beginPath(); ctx.roundRect(p.x - width / 2, p.y - 9, width, 18, 5); ctx.fill();
       ctx.fillStyle = blend(theme.edgeLabelTextIdle, theme.edgeLabelTextBright, amount); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, p.x, p.y);

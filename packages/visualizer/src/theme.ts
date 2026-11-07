@@ -14,6 +14,10 @@ export interface GraphTheme {
   /** Fallback accent for a node's left accent bar/detail text and pulsing halo when
    * `NodePresentation.accent` is unset. Never overrides an explicit `accent`. */
   readonly nodeAccentFallback: string;
+  /** How much of a node's own accent shows on its accent bar and detail text while it is idle, from 0
+   * (`nodeAccentIdle` only, the default) to 1 (the full accent). Set it when the accent carries meaning
+   * that outlives activity, such as a finished step's state. Not in `DEFAULT_GRAPH_THEME`: unset is 0. */
+  readonly nodeAccentIdleMix?: number;
   /** Node card fill, no current activity. */
   readonly nodeFillIdle: string;
   /** Node card fill, fully highlighted/active. */

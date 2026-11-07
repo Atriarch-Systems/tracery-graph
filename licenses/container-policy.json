@@ -11,17 +11,17 @@
     },
     {
       "name": "alpine-release",
-      "version": "3.24.2-r0",
+      "version": "3.24.4-r0",
       "license": "MIT",
       "origin": "alpine-base",
-      "aportsCommit": "d9d560d5de74ff9a7a73f3c903d6f126a0bf3142"
+      "aportsCommit": "105b835acd9971b9770fb61f5a1ddcc133c180dc"
     },
     {
       "name": "ca-certificates-bundle",
-      "version": "20260909-r0",
+      "version": "20261020-r0",
       "license": "MPL-2.0 AND MIT",
       "origin": "ca-certificates",
-      "aportsCommit": "eb7078df3a16d666e8f7723f94bb92e00d4b9236"
+      "aportsCommit": "e78f5987166c6ffbe23f6472e2e8f040298fe2da"
     },
     {
       "name": "libgcc",
@@ -39,10 +39,10 @@
     },
     {
       "name": "musl",
-      "version": "1.2.6-r2",
+      "version": "1.2.6-r3",
       "license": "MIT",
       "origin": "musl",
-      "aportsCommit": "f5640d3a10f664c9119720c60515265d3d6f6d01"
+      "aportsCommit": "8f79d39391b46d6dbf1800fb68b8212a21d5ee2e"
     }
   ]
 }

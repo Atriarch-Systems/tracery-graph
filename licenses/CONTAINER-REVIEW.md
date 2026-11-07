@@ -29,7 +29,7 @@ published source archive and retained scan/SBOM evidence.
   Copy its unmodified binary and the complete reviewed upstream LICENSE from
   licenses/vendor; the official ARM image omits /usr/local/LICENSE. npm, Corepack and
   Yarn are absent from the final image, including its base layers.
-- Alpine 3.24.2 packages, version pinned, installed with `apk --root` into an
+- Alpine 3.24.4 packages, version pinned, installed with `apk --root` into an
   empty root filesystem (the final stage is `FROM scratch`). The exact 6
   packages, source commits and declared licenses are recorded in
   [container-policy.json](container-policy.json): musl, libgcc, libstdc++ (the

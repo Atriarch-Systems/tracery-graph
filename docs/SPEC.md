@@ -181,6 +181,8 @@ Projection rules:
   `completedAt = flow.endedAt`, `updatedAt = node.lastSeenAt`.
 - `detail` = last op name; `footer` = `${ops.length} ops` (or `${errorCount} errors`).
 - `dataFrom` edges have `kind: 'data'`, are dashed, and do not affect placement parents.
+- Call edges have `showLabel: false`: the label (`invoke`, or `invoke ×n` once repeated) shows when
+  the count is above 1 or an end is selected. Spawn edges keep `showLabel: true`.
 - Self edges (parent node === node) are suppressed but the op stays in the node history.
 - `catalog` lets the caller map `kind` to `NodePresentation`; a default catalog
   ships (`agent`, `subagent`, `llm`, `tool`, `memory`, `guard`, `human`, `service`, fallback).
@@ -201,7 +203,8 @@ Keep the existing contract (`VISUALIZER_CONTRACT_VERSION` becomes 2). Add:
 - `ActivityGraphProps.onNodeActivate?: (node) => void` fired on double-click / Enter
   (used to jump into a child flow from a trace view).
 - `placeBranches` accepts `edges` with `kind` and ignores `data` edges when
-  choosing a parent.
+  choosing a parent. `data` edges between siblings (same placement parent) put the
+  target in a column to the right of its sources.
 - Tests for each; SSR test still passes; `npm pack` produces a tarball that Virali
   can drop into `vendor/` unchanged in shape.
 

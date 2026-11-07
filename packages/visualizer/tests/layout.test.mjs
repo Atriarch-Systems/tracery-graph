@@ -64,3 +64,29 @@ test('data edges are never a placement parent; spawn edges are valid parents', (
   );
   assert.ok(spawned.positions.get('child2').x > spawned.positions.get('parent').x);
 });
+test('data edges between siblings order them left to right without changing their parent', () => {
+  // run -> {fetch, draft, render, publish} (calls); fetch -> draft -> render -> publish, draft -> publish (data)
+  const nodes = [
+    {id:'run', label:'Run', position:{x:0,y:0,anchored:true}},
+    {id:'publish', label:'Publish'}, {id:'render', label:'Render'}, {id:'draft', label:'Draft'}, {id:'fetch', label:'Fetch'},
+  ];
+  const calls = ['fetch','draft','render','publish'].map(id => ({id:'c-'+id, source:'run', target:id}));
+  const data = [['fetch','draft'],['draft','render'],['render','publish'],['draft','publish']]
+    .map(([s,t]) => ({id:`d-${s}-${t}`, source:s, target:t, kind:'data'}));
+  const {positions} = placeBranches(nodes, [...calls, ...data]);
+  const x = id => positions.get(id).x, y = id => positions.get(id).y;
+  assert.ok(x('run') < x('fetch') && x('fetch') < x('draft') && x('draft') < x('render') && x('render') < x('publish'));
+  // A chain stays on one row.
+  assert.equal(y('draft'), y('fetch'));
+  assert.equal(y('publish'), y('render'));
+  // Siblings without data edges between them still share the column beside the parent.
+  const flat = placeBranches(nodes, calls).positions;
+  assert.equal(flat.get('fetch').x, flat.get('publish').x);
+  // A data cycle between siblings stays finite and placed.
+  const cyc = placeBranches(nodes, [...calls, {id:'a',source:'fetch',target:'draft',kind:'data'}, {id:'b',source:'draft',target:'fetch',kind:'data'}]);
+  assert.equal(cyc.positions.size, nodes.length);
+  assert.ok([...cyc.positions.values()].every(p => Number.isFinite(p.x) && Number.isFinite(p.y)));
+  // Non-overlap holds.
+  for (const a of positions.values()) for (const b of positions.values()) if (a !== b)
+    assert.ok(Math.abs(a.x-b.x) >= (a.width+b.width)/2 || Math.abs(a.y-b.y) >= (a.height+b.height)/2);
+});
