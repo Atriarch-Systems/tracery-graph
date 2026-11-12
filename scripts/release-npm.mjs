@@ -1,12 +1,13 @@
-// Publish only the exact tarballs that passed publish:check in this workflow run,
-// each with an npm provenance attestation (`npm publish --provenance`).
+// Publish only the exact tarballs that passed publish:check in this workflow run.
 //
 //   node scripts/release-npm.mjs [artifacts/npm] [--no-provenance]
 //
-// Runs in the `publish-npm` job on a GitHub-hosted runner (`id-token: write`),
-// the only place npm can sign provenance. Authentication is NODE_AUTH_TOKEN
-// (the NPMJS_TOKEN secret) or, once each package has a Trusted Publisher on
-// npmjs.com, OIDC with no token at all; npm picks whichever applies.
+// Runs in the `publish-npm` job. By default that job is self-hosted and passes
+// --no-provenance, authenticating with NODE_AUTH_TOKEN (the NPMJS_TOKEN secret).
+// With the workflow's npm_provenance input it runs on a GitHub-hosted runner
+// (`id-token: write`), the only place npm can sign provenance, and each tarball gets
+// an attestation (`npm publish --provenance`); there npm also accepts OIDC Trusted
+// Publishing with no token, once each package lists the workflow on npmjs.com.
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';

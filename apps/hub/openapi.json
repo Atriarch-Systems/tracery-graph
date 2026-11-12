@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Tracery Graph Hub",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "description": "SPEC.md §6 HTTP API."
   },
   "components": {
