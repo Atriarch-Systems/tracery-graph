@@ -310,7 +310,7 @@ Other avoidable weight in the runtime tree, not changed here: `@fastify/static` 
 packages behind it (`minimatch`, `brace-expansion`, `balanced-match`, `minipass`, `path-scurry`,
 `lru-cache`), a candidate for a later pass.
 
-npm packages are now published with provenance (docs/PUBLISHING.md).
+npm packages can be published with provenance through the release workflow's `npm_provenance` input, which needs a GitHub-hosted runner; the default self-hosted publish carries none (docs/PUBLISHING.md).
 
 ## Container image (2026-09-26)
 

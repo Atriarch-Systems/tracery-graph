@@ -14,6 +14,10 @@ on:
         description: Exact prepared package version, without v (required for publish)
         type: string
         required: false
+      npm_provenance:
+        description: Publish npm packages with a provenance attestation. Needs GitHub-hosted runners (ubuntu-latest); off publishes from the self-hosted runner with NPMJS_TOKEN
+        type: boolean
+        default: false
 permissions:
   contents: read
 defaults:
@@ -174,8 +178,9 @@ jobs:
   # where it is used and the GitHub release is only undrafted after everything
   # (npm and Docker Hub) is published:
   #   preflight    verify every artifact and credential, then create the tag and draft release
-  #   publish-npm  npm tarballs with provenance (GitHub-hosted: npm signs provenance and
-  #                supports Trusted Publishing only there)
+  #   publish-npm  npm tarballs; self-hosted with NPMJS_TOKEN by default, or GitHub-hosted
+  #                with provenance when npm_provenance is set (npm signs provenance and
+  #                supports Trusted Publishing only on GitHub-hosted runners)
   #   publish      Docker Hub images, then undraft the GitHub release with its evidence
   preflight:
     if: needs.prepare.outputs.publish == 'true'
@@ -230,10 +235,11 @@ jobs:
   publish-npm:
     if: needs.prepare.outputs.publish == 'true'
     needs: [prepare, validate, preflight]
-    # The one GitHub-hosted job: npm provenance and Trusted Publishing need a
-    # GitHub-hosted runner and the workflow's OIDC identity. It runs no repository code
-    # beyond scripts/release-npm.mjs (node built-ins only; no npm ci, no build).
-    runs-on: ubuntu-latest
+    # Self-hosted by default. With npm_provenance it moves to a GitHub-hosted runner:
+    # npm provenance and Trusted Publishing need one and the workflow's OIDC identity.
+    # Either way it runs no repository code beyond scripts/release-npm.mjs (node
+    # built-ins only; no npm ci, no build).
+    runs-on: ${{ inputs.npm_provenance && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64","arc-amd64"]') }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -262,15 +268,18 @@ jobs:
       - name: Check npm authentication
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}
+          NPM_PROVENANCE: ${{ inputs.npm_provenance && 'true' || 'false' }}
         run: |
           set -euo pipefail
           if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
             npm whoami --registry https://registry.npmjs.org
-          else
+          elif [ "$NPM_PROVENANCE" = true ]; then
             echo 'No NPMJS_TOKEN: publishing through npm Trusted Publishing (OIDC). Each package must list this workflow as its Trusted Publisher (docs/PUBLISHING.md).'
+          else
+            echo 'Missing NPMJS_TOKEN: a self-hosted runner cannot use Trusted Publishing'; exit 1
           fi
-      - name: Publish tested npm tarballs in dependency order, with provenance
-        run: node scripts/release-npm.mjs artifacts/npm
+      - name: Publish tested npm tarballs in dependency order
+        run: node scripts/release-npm.mjs artifacts/npm ${{ inputs.npm_provenance && '' || '--no-provenance' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}
 

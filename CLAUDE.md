@@ -30,7 +30,7 @@ loaded through `TRACERY_EXTENSIONS_MODULE`) -- see `docs/SPEC.md` §7 and
 - Tests: `node --test tests/*.test.mjs` against `dist/`, build first. Python: pytest.
 - Consumer inputs are `readonly` and never mutated. No `any` in exports.
 - Node >= 22.13 (`node:sqlite`). Python 3.11 is the supported interpreter.
-- CI runs on self-hosted runners only. The single exception is the release workflow's `publish-npm` job, which must be GitHub-hosted (`ubuntu-latest`) so npm can sign provenance and accept Trusted Publishing (docs/PUBLISHING.md).
+- CI runs on self-hosted runners only, including the release workflow's `publish-npm` job by default (`NPMJS_TOKEN`, no provenance). Only its `npm_provenance` input moves that one job to a GitHub-hosted runner (`ubuntu-latest`), where npm can sign provenance and accept Trusted Publishing; the org has no hosted minutes by default (docs/PUBLISHING.md).
 - Licensing: original Tracery Graph code is Apache-2.0; third-party files retain their
   own licenses. No enterprise implementation or runtime commercial-license gate
   lives in this repository. Release license-compliance checks are required.

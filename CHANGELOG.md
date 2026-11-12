@@ -2,7 +2,28 @@
 
 ## Unreleased
 
-## v0.1.4
+## v0.1.5
+
+The first release on npm and Docker Hub since v0.1.2. It ships everything listed under v0.1.4
+and v0.1.3 below: both were tagged, but their npm publish job never ran, so neither reached a
+registry and their GitHub releases stay drafts. Upgrading from 0.1.2, read both sections. Core,
+client, React and hub 0.1.5; visualizer 0.4.0. No code changes since v0.1.4.
+
+### Release workflow
+
+- **npm publishing runs on the self-hosted runner again.** Since v0.1.3 the `publish-npm` job ran
+  only on a GitHub-hosted runner (`ubuntu-latest`), so that npm could sign provenance. The
+  organization has no GitHub-hosted minutes, so that job waited 24 hours and was cancelled, for
+  v0.1.3 and for v0.1.4. It now runs on `[self-hosted, Linux, X64, arc-amd64]` with
+  `NPMJS_TOKEN` and publishes **without** a provenance attestation, as v0.1.2 did. The tested
+  tarballs, their checksums and the commit check are unchanged.
+- **New `npm_provenance` input** (manual runs, default off) moves `publish-npm` back to
+  `ubuntu-latest` and publishes with `--provenance`, for when GitHub-hosted runners are available.
+  Without it, a missing `NPMJS_TOKEN` now fails the job, since Trusted Publishing works only on
+  GitHub-hosted runners.
+- docs/PUBLISHING.md, docs/HARDENING.md and CLAUDE.md describe the new default.
+
+## v0.1.4 (tagged, not published; shipped in v0.1.5)
 
 Easier-to-read activity graphs: pipelines lay out left to right, single call edges lose their
 `×1` labels, and idle cards can keep their accent colour. Core, client, React and hub 0.1.4;
@@ -46,9 +67,10 @@ visualizer 0.4.0.
   (gitlab.alpinelinux.org) instead of the GitHub mirror, which lagged a point release behind
   (it lacked the 3.24.4 release commit).
 
-## v0.1.3
+## v0.1.3 (tagged, not published; shipped in v0.1.5)
 
-Supply-chain hardening: a smaller hub dependency tree, an opt-in OpenAPI document and npm provenance.
+Supply-chain hardening: a smaller hub dependency tree, an opt-in OpenAPI document and npm provenance
+(provenance is opt-in from v0.1.5: see the release workflow notes there).
 Core, client, React and hub 0.1.3; visualizer stays 0.3.2.
 
 ### Hub

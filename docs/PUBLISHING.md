@@ -1,8 +1,9 @@
 # Publishing npm and Docker releases
 
 Publication runs through [release.yaml](../.github/workflows/release.yaml) on
-Atriarch's self-hosted runners, except the npm publish job, which runs on a GitHub-hosted
-runner so the packages carry npm provenance (see "How the publication jobs are split"). Use its manual **validate** operation for a dry
+Atriarch's self-hosted runners. Only with the optional **npm_provenance** input does the npm
+publish job move to a GitHub-hosted runner, so the packages carry npm provenance (see "How the
+publication jobs are split"). Use its manual **validate** operation for a dry
 run, or **publish** to validate, create the version tag, and publish npm packages,
 Docker images and the GitHub release in one run. Ordinary version-tag pushes
 remain supported. No additional personal GitHub token is required.
@@ -38,37 +39,46 @@ validation jobs succeed.
 
 ## How the publication jobs are split
 
-`release.yaml` runs everything on Atriarch's self-hosted runners except one job:
+`release.yaml` runs every job on Atriarch's self-hosted runners unless you tick
+**npm_provenance**, which moves `publish-npm` alone to a GitHub-hosted runner:
 
 | Job | Runner | Does |
 | --- | --- | --- |
 | `prepare`, `validate`, `containers` | self-hosted | Version checks, tests, both native container builds. |
 | `preflight` | self-hosted | Verifies every artifact checksum and the tested commit, checks the Docker settings, then creates the annotated tag and the **draft** GitHub release. |
-| `publish-npm` | **`ubuntu-latest` (GitHub-hosted)** | Downloads `release-candidate-npm`, re-verifies its checksums and every tarball digest, and publishes each exact tarball with `npm publish --provenance`. Permissions: `contents: read`, `id-token: write`. |
+| `publish-npm` | self-hosted; **`ubuntu-latest` (GitHub-hosted)** with `npm_provenance` | Downloads `release-candidate-npm`, re-verifies its checksums and every tarball digest, and publishes each exact tarball with `npm publish` (adding `--provenance` with `npm_provenance`). Permissions: `contents: read`, `id-token: write`. |
 | `publish` | self-hosted | Loads and verifies the saved images, publishes the source images, architecture images and multi-platform tags to Docker Hub, then uploads the evidence and **undrafts** the GitHub release. |
 
 They run in that order (`publish-npm` needs `preflight`; `publish` needs `publish-npm`), so
 the GitHub release only leaves draft after both npm and Docker Hub are published, and a
 failure at any step stops everything after it.
 
-Why `publish-npm` is the one GitHub-hosted job: npm can sign
+Why provenance is opt-in: npm can sign
 [provenance](https://docs.npmjs.com/generating-provenance-statements) and accept
 [Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) only from a GitHub-hosted
 runner with the workflow's OIDC identity (`id-token: write`); self-hosted runners are not
-supported. It runs no repository code beyond `scripts/release-npm.mjs` (Node built-ins only,
-no `npm ci`, no build), downloads only the npm artifact, and holds no Docker credentials.
-The Docker secrets exist only in `preflight` and `publish`; the npm token only in `publish-npm`.
+supported. GitHub-hosted minutes are not available to the organization by default, and a
+`publish-npm` job waiting for one is cancelled after 24 hours with nothing published (v0.1.3
+and the first v0.1.4 attempt ended that way). So the default publishes from the self-hosted
+runner with `NPMJS_TOKEN` and no attestation. Tick **npm_provenance** only when GitHub-hosted
+runners are available to the organization. Either way the job runs no repository code beyond
+`scripts/release-npm.mjs` (Node built-ins only, no `npm ci`, no build), downloads only the npm
+artifact, and holds no Docker credentials. The Docker secrets exist only in `preflight` and
+`publish`; the npm token only in `publish-npm`.
 
-`scripts/release-npm.mjs` publishes with `--provenance`, keeps its idempotent "already
-published with matching integrity" skip (different bytes under an existing version fail the
-run before anything is published), and afterwards requires the registry to list a provenance
-attestation for every package it published in that run (a package skipped because an identical
-version is already on npm, such as an unchanged visualizer, is not held to this). A version
-that went out without provenance cannot be repaired by retrying; release a new patch version.
+`scripts/release-npm.mjs` keeps its idempotent "already published with matching integrity"
+skip (different bytes under an existing version fail the run before anything is published).
+With `npm_provenance` it publishes with `--provenance` and afterwards requires the registry to
+list a provenance attestation for every package it published in that run (a package skipped
+because an identical version is already on npm, such as an unchanged visualizer, is not held
+to this). A version that went out without provenance cannot be repaired by retrying; release a
+new patch version.
 
 ## npm authentication
 
-The job authenticates with the token below; it also uses the workflow's OIDC identity when a package is configured for it.
+The job authenticates with the token below. On a GitHub-hosted runner (`npm_provenance`) it also
+uses the workflow's OIDC identity when a package is configured for it; on the self-hosted runner
+the token is required.
 
 The `NPMJS_TOKEN` secret is used as `NODE_AUTH_TOKEN` in `publish-npm` only, after the
 artifact checksums and `npm whoami`. Keep its blast radius small:
@@ -101,10 +111,11 @@ source files, issue comments or chat.
    container architectures without creating tags, releases or registry uploads.
 3. Once validation and the account setup above are complete, run the workflow
    again on **main**, select **publish**, and enter the exact prepared version
-   without a `v`, for example `0.1.1`.
+   without a `v`, for example `0.1.1`. Leave **npm_provenance** off unless
+   GitHub-hosted runners are available to the organization.
 4. After validation and the Docker credential checks succeed, the workflow creates an
    annotated `v0.1.1` tag at the exact tested commit and a draft GitHub release.
-   It publishes the tested npm tarballs (with provenance) and Docker images,
+   It publishes the tested npm tarballs (with provenance when `npm_provenance` is set) and Docker images,
    attaches the evidence, and publishes the GitHub release. An existing tag must already resolve to
    that same commit; the workflow never moves it.
 5. Check the release run and run the post-publication section of
@@ -235,6 +246,11 @@ rather than overwrite evidence. npm credentials are proven only in `publish-npm`
 the tag and draft release exist: a missing or expired `NPMJS_TOKEN` leaves the tag and a draft, and
 the fix is to correct the credential and rerun `publish-npm`. A draft release stays draft until all assets
 are uploaded and both registries have been published.
+
+A rerun uses the workflow file of the original run. When the fix is a change to
+`release.yaml` itself, the tag already points at the old commit and cannot move, so
+prepare a new patch version and leave the old tag's release as a draft (v0.1.4 was
+superseded by v0.1.5 this way).
 
 If rebuilding changes bytes after any upload, prepare a new patch version.
 Never move a version tag or unpublish packages to disguise a partial release.
